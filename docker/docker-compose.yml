@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: research_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-research_db}
+    ports:
+      - "127.0.0.1:5432:5432" # Secure localhost binding
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-research_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: research_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secure_pass}@postgres:5432/${POSTGRES_DB:-research_db}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENALEX_EMAIL: ${OPENALEX_EMAIL:-researcher@example.edu}
+      S2_API_KEY: ${S2_API_KEY:-}
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - ../data/uploads:/data/uploads
+      - ../data/cache:/data/cache
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: research_frontend
+    restart: unless-stopped
+    environment:
+      BACKEND_API_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+
