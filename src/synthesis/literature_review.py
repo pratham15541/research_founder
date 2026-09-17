@@ -26,7 +26,8 @@ class LiteratureReviewGenerator:
         Produce a structured multi-section academic literature review.
         """
         # Try LLM-assisted synthesis if available
-        if settings.NVIDIA_API_KEY:
+        from src.llm.llm_router import LLMRouter
+        if LLMRouter.is_available():
             llm_review = cls._generate_with_llm(topic_query, papers, clusters, domains, ranked_gaps)
             if llm_review:
                 return llm_review
@@ -43,7 +44,7 @@ class LiteratureReviewGenerator:
         domains: List[str],
         ranked_gaps: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """Query NVIDIA AI API for complete academic literature review."""
+        """Query LLM API (Bedrock or NVIDIA) for complete academic literature review."""
         top_papers_summary = "\n".join([
             f"- \"{p.get('title')}\" ({p.get('year')}) — Citations: {p.get('citation_count')}. Abstract: {p.get('abstract', '')[:160]}..."
             for p in papers[:15]
@@ -78,11 +79,24 @@ Write a comprehensive, publication-ready literature review structured into:
 Format the output clearly with markdown subheadings (##, ###) and formal academic prose with in-text paper citations.
 """
         try:
-            from src.llm.nvidia_client import NvidiaClient
-            review_text = NvidiaClient.generate(prompt=prompt, temperature=0.25, max_tokens=3000)
+            from src.llm.llm_router import LLMRouter
+            review_text = LLMRouter.generate(prompt=prompt, temperature=0.25, max_tokens=3000)
             if review_text and len(review_text.strip()) > 100:
+                first_para = review_text.strip().split("\n\n")[0]
                 return {
                     "topic": topic,
+                    "executive_summary": first_para if len(first_para) > 50 else f"Systematic survey of {len(papers)} publications in {topic}.",
+                    "thematic_breakdown": [
+                        {
+                            "cluster_name": info.get("label", f"Cluster {cid}"),
+                            "description": info.get("short_description", "Methodological grouping."),
+                            "key_papers": [p.get("title", "") for p in papers if p.get("axis_a_tag") == info.get("label")][:2],
+                            "reported_limitations": "Computational scaling and domain transfer constraints."
+                        }
+                        for cid, info in clusters.items()
+                    ],
+                    "comparative_synthesis": f"Analysis maps {len(clusters)} methodological themes across {len(domains)} problem settings.",
+                    "identified_voids": f"Primary void: {ranked_gaps[0].get('project_title', 'Boundary gap')}" if ranked_gaps else "Structural voids identified across sparse matrix cells.",
                     "review_markdown": review_text.strip(),
                     "total_papers_referenced": len(papers),
                     "sections_included": [
@@ -93,10 +107,10 @@ Format the output clearly with markdown subheadings (##, ###) and formal academi
                         "Unresolved Gaps",
                         "Conclusion"
                     ],
-                    "generator": f"nvidia/{settings.NVIDIA_MODEL}"
+                    "generator": "llm_router"
                 }
         except Exception as e:
-            logger.warning(f"NVIDIA LLM literature review generation failed: {e}. Falling back to structured generator.")
+            logger.warning(f"LLM literature review generation failed: {e}. Falling back to structured generator.")
 
         return None
 
@@ -115,17 +129,19 @@ Format the output clearly with markdown subheadings (##, ###) and formal academi
         sections = []
 
         # 1. Executive Summary
-        sections.append(f"# Systematic Literature Review: Current State & Future Horizons in {topic}\n")
-        sections.append("## 1. Executive Summary & Scope")
-        sections.append(
+        exec_summary = (
             f"This review synthesizes findings across a curated corpus of {len(papers)} peer-reviewed scientific publications "
             f"investigating **{topic}**. Using unsupervised semantic clustering and combinatorial dimension analysis, "
             f"the literature is mapped across {len(clusters)} primary methodological families and {len(domains)} application domains. "
             f"While foundational work has demonstrated substantial empirical progress, significant structural gaps remain at the intersection "
-            f"of emerging computational paradigms and complex domain settings.\n"
+            f"of emerging computational paradigms and complex domain settings."
         )
+        sections.append(f"# Systematic Literature Review: Current State & Future Horizons in {topic}\n")
+        sections.append("## 1. Executive Summary & Scope")
+        sections.append(exec_summary + "\n")
 
         # 2. Key Methodological Families
+        thematic_breakdown = []
         sections.append("## 2. Thematic Breakdown of Existing Methodologies")
         for cid, info in clusters.items():
             lbl = info.get("label", f"Cluster {cid}")
@@ -135,17 +151,29 @@ Format the output clearly with markdown subheadings (##, ###) and formal academi
             sections.append(f"{desc}\n")
             # List 2 representative papers
             matching_papers = [p for p in papers if p.get("axis_a_tag") == lbl][:2]
+            key_paper_titles = []
             for p in matching_papers:
-                sections.append(f"- **{p.get('title')}** ({p.get('year')}) — *Citations: {p.get('citation_count', 0)}*")
+                t = p.get("title", "")
+                if t:
+                    key_paper_titles.append(t)
+                sections.append(f"- **{t}** ({p.get('year')}) — *Citations: {p.get('citation_count', 0)}*")
             sections.append("")
 
+            thematic_breakdown.append({
+                "cluster_name": lbl,
+                "description": desc,
+                "key_papers": key_paper_titles,
+                "reported_limitations": "Computational scaling and generalization constraints reported across benchmark evaluations."
+            })
+
         # 3. Application Domain Landscape
-        sections.append("## 3. Application Domain Landscape")
-        sections.append(
+        comp_synthesis = (
             f"Empirical evaluation in {topic} is concentrated across {len(domains)} distinct application regimes: "
             f"{', '.join(domains)}. Prominent baseline benchmarks reveal strong clustering in well-established problem settings, "
-            f"while peripheral domains suffer from data sparsity and unvalidated generalization assumptions.\n"
+            f"while peripheral domains suffer from data sparsity and unvalidated generalization assumptions."
         )
+        sections.append("## 3. Application Domain Landscape")
+        sections.append(comp_synthesis + "\n")
 
         # 4. Critical Research Gaps
         sections.append("## 4. Unexplored Research Gaps & Identified Voids")
@@ -162,6 +190,13 @@ Format the output clearly with markdown subheadings (##, ###) and formal academi
             sections.append(f"- **Feasibility Score:** {g.get('composite_score', 0)}/5.0 (Novelty: {g.get('novelty_score')}, Feasibility: {g.get('feasibility_score')})")
             sections.append(f"- **Adversarial Critique:** {critique}\n")
 
+        top_gap_name = ranked_gaps[0].get("project_title") if ranked_gaps else "cross-domain combinations"
+        identified_voids = (
+            f"Combinatorial 2D density analysis revealed {len(ranked_gaps)} high-opportunity structural voids, "
+            f"most prominently '{top_gap_name}', where component foundations exist in adjacent literature but direct integration is unattempted."
+            if ranked_gaps else "No primary structural voids detected."
+        )
+
         # 5. Conclusion
         sections.append("## 5. Conclusion & Recommendations")
         sections.append(
@@ -173,6 +208,10 @@ Format the output clearly with markdown subheadings (##, ###) and formal academi
         review_markdown = "\n".join(sections)
         return {
             "topic": topic,
+            "executive_summary": exec_summary,
+            "thematic_breakdown": thematic_breakdown,
+            "comparative_synthesis": comp_synthesis,
+            "identified_voids": identified_voids,
             "review_markdown": review_markdown,
             "total_papers_referenced": len(papers),
             "sections_included": [

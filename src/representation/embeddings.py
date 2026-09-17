@@ -57,9 +57,28 @@ class EmbeddingEngine:
             fallback_vecs.append(vec)
         return np.array(fallback_vecs, dtype=np.float32)
 
+    def embed_text(self, text: str) -> np.ndarray:
+        """Encode a single string into a 1D normalized vector."""
+        return self.embed_texts([text])[0]
+
     def embed_paper_content(self, title: str, abstract: str) -> List[float]:
         """Encode a single paper title and abstract."""
         combined = f"{title.strip()} [SEP] {abstract.strip()}"
         res = self.embed_texts([combined])
         return res[0].tolist()
+
+
+def get_embedding_engine(model_name: Optional[str] = None):
+    """
+    Factory function to return BedrockEmbeddingEngine (if USE_AWS=true)
+    or local SentenceTransformer EmbeddingEngine.
+    """
+    from src.config import settings
+    if settings.USE_AWS:
+        try:
+            from src.representation.bedrock_embeddings import BedrockEmbeddingEngine
+            return BedrockEmbeddingEngine()
+        except Exception as e:
+            logger.warning(f"Could not load BedrockEmbeddingEngine ({e}). Falling back to local.")
+    return EmbeddingEngine(model_name or settings.EMBEDDING_MODEL_NAME)
 

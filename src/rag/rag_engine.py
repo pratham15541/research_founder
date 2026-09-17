@@ -64,8 +64,11 @@ class RAGEngine:
                 citations.append({
                     "paper_id": p_id,
                     "title": title,
+                    "paper_title": title,
                     "year": year,
                     "section": sec,
+                    "section_type": sec,
+                    "snippet": text[:240] if text else "",
                     "similarity": sim,
                     "doi": chunk.get("doi")
                 })
@@ -73,9 +76,10 @@ class RAGEngine:
 
         context_str = "\n\n".join(context_blocks)
 
-        # Attempt LLM generation via NVIDIA API
+        # Attempt LLM generation via Bedrock or NVIDIA API
         answer = None
-        if settings.NVIDIA_API_KEY:
+        from src.llm.llm_router import LLMRouter
+        if LLMRouter.is_available():
             answer = cls._generate_with_llm(user_query, context_str)
 
         if not answer:
@@ -89,8 +93,8 @@ class RAGEngine:
 
     @classmethod
     def _generate_with_llm(cls, user_query: str, context_str: str) -> Optional[str]:
-        """Query NVIDIA AI foundation models with grounded RAG prompt."""
-        from src.llm.nvidia_client import NvidiaClient
+        """Query LLM foundation models (Bedrock or NVIDIA) with grounded RAG prompt."""
+        from src.llm.llm_router import LLMRouter
 
         prompt = f"""You are ResearchGapAI's principal scientific research assistant.
 Answer the user's research question strictly based on the following retrieved scientific context excerpts.
@@ -106,9 +110,9 @@ USER RESEARCH QUESTION:
 Synthesize a clear, authoritative, and structured scientific answer:
 """
         try:
-            return NvidiaClient.generate(prompt=prompt, temperature=0.2, max_tokens=2048)
+            return LLMRouter.generate(prompt=prompt, temperature=0.2, max_tokens=2048)
         except Exception as e:
-            logger.warning(f"RAG NVIDIA LLM generation failed: {e}. Falling back to structured synthesis.")
+            logger.warning(f"RAG LLM generation failed: {e}. Falling back to structured synthesis.")
             return None
 
     @classmethod

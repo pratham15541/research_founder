@@ -27,7 +27,8 @@ class DevilsAdvocateNode:
         Generate the strongest skeptical counter-argument why the combination might be a dead end.
         Uses LLM if available; otherwise applies deterministic skepticism rules.
         """
-        if settings.NVIDIA_API_KEY:
+        from src.llm.llm_router import LLMRouter
+        if LLMRouter.is_available():
             llm_critique = cls._query_llm_critique(
                 axis_a_val, axis_b_val, neighbor_papers_a, neighbor_papers_b
             )
@@ -75,7 +76,7 @@ class DevilsAdvocateNode:
         papers_a: List[Dict[str, Any]],
         papers_b: List[Dict[str, Any]]
     ) -> Optional[str]:
-        """Call NVIDIA AI API with adversarial reviewer prompt."""
+        """Call LLM (Bedrock or NVIDIA) with adversarial reviewer prompt."""
         context_a = "\n".join([f"- {p.get('title')}" for p in papers_a[:3]])
         context_b = "\n".join([f"- {p.get('title')}" for p in papers_b[:3]])
 
@@ -96,12 +97,12 @@ Do NOT praise this idea. Provide the single strongest technical, mathematical, o
 Keep your critique concise (2-3 sentences), highly specific, and authoritative. Return plain text only.
 """
         try:
-            from src.llm.nvidia_client import NvidiaClient
-            critique = NvidiaClient.generate(prompt=prompt, temperature=0.3, max_tokens=1024)
+            from src.llm.llm_router import LLMRouter
+            critique = LLMRouter.generate(prompt=prompt, temperature=0.3, max_tokens=1024)
             if critique and len(critique.strip()) > 30:
                 return critique.strip()
         except Exception as e:
-            logger.warning(f"Adversarial NVIDIA LLM critique call failed: {e}")
+            logger.warning(f"Adversarial LLM critique call failed: {e}")
 
         return None
 

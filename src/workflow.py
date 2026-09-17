@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.ingestion.hybrid import HybridIngestionEngine
 from src.ingestion.pdf_parser import AcademicPDFParser
-from src.representation.embeddings import EmbeddingEngine
+from src.representation.embeddings import EmbeddingEngine, get_embedding_engine
 from src.representation.clustering import DimensionDiscoveryEngine
 from src.representation.labeling import ClusterLabelingEngine
 from src.representation.domain_discovery import DomainDiscoveryEngine
@@ -24,8 +24,9 @@ from src.matrix.gap_filter import CandidateGapFilter
 from src.ranking.ranker import GroundedGapRanker
 from src.graph.knowledge_graph import KnowledgeGraphBuilder
 from src.storage.cache import CompoundingCacheEngine
+from src.storage.s3_storage import S3StorageBackend
 from src.rag.chunker import AcademicChunker
-from src.rag.faiss_index import FAISSVectorIndex
+from src.rag.vector_store import get_vector_store
 from src.synthesis.literature_review import LiteratureReviewGenerator
 from src.synthesis.question_generator import ResearchQuestionGenerator
 from src.evaluation.metrics import EvaluationMetricsEngine
@@ -37,8 +38,11 @@ class ResearchWorkflowRunner:
 
     def __init__(self):
         self.ingestion = HybridIngestionEngine()
-        self.embedder = EmbeddingEngine(settings.EMBEDDING_MODEL_NAME)
-        self.faiss_index = FAISSVectorIndex(dimension=384)
+        self.embedder = get_embedding_engine()
+        dim = getattr(self.embedder, "dimension", 384)
+        self.vector_index = get_vector_store(dimension=dim)
+        self.faiss_index = self.vector_index  # backwards-compatibility alias
+        self.s3_storage = S3StorageBackend()
 
     async def run_pipeline(
         self,
@@ -110,14 +114,16 @@ class ResearchWorkflowRunner:
         else:
             axis_b_labels = axis_b_predefined
 
-        # Tag Axis B (Rule-based / Keyword classification for demonstration)
-        self._tag_axis_b(paper_dicts, axis_b_labels)
-        # Tag Axis B dynamically using embedding cosine similarity
-        DomainDiscoveryEngine.tag_papers_with_domains(
-            papers=paper_dicts,
-            domains=axis_b_labels,
-            embedder=self.embedder
-        )
+        # Tag Axis B dynamically using embedding cosine similarity with heuristic fallback
+        try:
+            DomainDiscoveryEngine.tag_papers_with_domains(
+                papers=paper_dicts,
+                domains=axis_b_labels,
+                embedder=self.embedder
+            )
+        except Exception as e:
+            logger.warning(f"Dynamic domain tagging failed ({e}). Falling back to heuristic classification.")
+            self._tag_axis_b(paper_dicts, axis_b_labels)
 
         # Step 6: Deterministic 2D Matrix Aggregation
         matrix_result = CombinatorialMatrixAggregator.aggregate_matrix(
@@ -160,13 +166,13 @@ class ResearchWorkflowRunner:
         )
         graph_html = KnowledgeGraphBuilder.export_pyvis_html(graph)
 
-        # Step 11: Chunk corpus and index in FAISS vector store
+        # Step 11: Chunk corpus and index in vector store (OpenSearch or FAISS)
         chunks = AcademicChunker.chunk_corpus(paper_dicts)
-        self.faiss_index.clear()
+        self.vector_index.clear()
         if chunks:
             chunk_texts = [f"{c.get('paper_title')} [{c.get('section_type')}] {c.get('text')}" for c in chunks]
             chunk_embs = self.embedder.embed_texts(chunk_texts)
-            self.faiss_index.add_chunks(chunks, chunk_embs)
+            self.vector_index.add_chunks(chunks, chunk_embs)
 
         # Step 12: Quantitative Evaluation Metrics
         topic_terms_list = [cinfo.get("key_terms", []) for cinfo in cluster_info.values()]

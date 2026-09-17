@@ -35,66 +35,88 @@ The complete architectural, algorithmic, and operational specifications are avai
 
 ---
 
-## 🚀 Quickstart: Local Open-Source Setup
+## 🚀 Quickstart: Local Setup (Zero Docker Required!)
+
+The entire system runs natively on Windows/Linux/macOS using standard Python `venv`. No Docker daemon or container installation is needed.
 
 ### 1. Prerequisites
-- Docker & Docker Compose ($2.20+$)
-- Python 3.11 or 3.12
+- Python 3.11, 3.12, or 3.13
 - Git
 
 ### 2. Environment Configuration
-Create a `.env` file from the template:
-```bash
-cp .env.example .env
+Create a `.env` file from `.env.example`:
+```cmd
+copy .env.example .env
 ```
-Populate the environment variables:
-```ini
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres_secure_pass
-POSTGRES_DB=research_db
-OPENALEX_EMAIL=your_email@university.edu # For OpenAlex Polite Pool (10 req/sec)
-GEMINI_API_KEY=your_gemini_api_key       # For LLM labeling & ranking
-S2_API_KEY=                              # Optional Semantic Scholar API key
-```
+Default `.env` settings will automatically run in local mode (SQLite + in-memory FAISS + local file storage).
 
-### 3. Launching the Application
+### 3. Launching the Application (Standard Python `venv`)
 
-You can run either via **Docker Compose** (full stack in containers) or directly on host with **`uv`**:
-
-#### Option A: Run directly with `uv` (Fastest, uses host resources)
-Since your `pgvector` container is already running on port 5432:
-
-1. **Start the FastAPI Backend** (Terminal 1):
-   ```bash
-   uv run uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
+1. **Setup & Install**:
+   ```cmd
+   .\setup_venv.bat
    ```
-   Interactive Swagger API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-
-2. **Start the Streamlit Frontend** (Terminal 2):
-   ```bash
-   uv run streamlit run src/ui/app.py --server.port=8501 --server.address=127.0.0.1
+   *Or manually:*
+   ```cmd
+   python -m venv venv
+   .\venv\Scripts\activate
+   pip install -r requirements.txt
    ```
-   Interactive Web UI: [http://127.0.0.1:8501](http://127.0.0.1:8501)
 
-#### Option B: Run everything with Docker Compose
-```bash
-# Spins up PostgreSQL 16 + pgvector, FastAPI backend, and Streamlit frontend
-docker compose -f docker/docker-compose.yml up -d
-```
+2. **Start the FastAPI Backend** (Terminal 1):
+   ```cmd
+   .\run_backend.bat
+   ```
+   - Interactive Swagger API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+   - Health Check: [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)
+
+3. **Start the Streamlit Frontend** (Terminal 2):
+   ```cmd
+   .\run_frontend.bat
+   ```
+   - Interactive Web UI: [http://127.0.0.1:8501](http://127.0.0.1:8501)
 
 ---
 
-## 🔬 Testing & Verification Protocols
-- **Run the Complete Test Suite (13 tests across API, storage, clustering, matrix, PDF, proxies)**:
-  ```bash
-  uv run pytest tests/
-  ```
-- **15–20 Sample Classification Agreement Audit**:
-  ```bash
-  uv run python scripts/sample_validation.py
-  ```
-- **Pre-fetch Topic for Offline Demo (Zero live API calls during judged presentation)**:
-  ```bash
-  uv run python scripts/prefetch_topic.py --topic "Physics-Informed Neural Networks" --size 60
-  ```
+## ☁️ AWS Open-Source Tech Stack Migration
+
+All components have been modernized to support the **AWS Open-Source Tech Stack** with zero Docker requirement:
+
+| Component | AWS Cloud Service | Local Non-Docker Fallback | Implementation |
+|---|---|---|---|
+| **LLM Reasoning** | Amazon Bedrock (Claude 3 / Titan / Llama 3) | OpenRouter / NVIDIA NGC / Offline heuristics | `src/llm/bedrock_client.py` & `src/llm/llm_router.py` |
+| **Embeddings** | Amazon Titan Embed Text v2 | SentenceTransformers (`all-MiniLM-L6-v2`) | `src/representation/bedrock_embeddings.py` |
+| **Vector Store** | Amazon OpenSearch Serverless | In-memory FAISS (`FAISSVectorIndex`) | `src/rag/vector_store.py` & `src/rag/opensearch_index.py` |
+| **Document Storage** | Amazon S3 | Local filesystem (`./data/uploads`) | `src/storage/s3_storage.py` |
+| **Relational DB** | Amazon Aurora PostgreSQL | Local SQLite (`./data/cache/compounding_research.db`) | SQLAlchemy Async Session |
+
+### Activating AWS (When AWS Credits / Keys are Added)
+Once you have your AWS account credentials ready, simply update your `.env`:
+```ini
+USE_AWS=true
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+S3_BUCKET_NAME=your-s3-bucket-name
+# Optional:
+OPENSEARCH_ENDPOINT=https://your-opensearch-domain.us-east-1.es.amazonaws.com
+```
+Everything automatically routes to AWS over standard HTTPS APIs with **zero Docker required**.
+
+---
+
+## 🔬 Testing & Verification
+
+Run the complete 31-test verification suite directly from your `venv`:
+```cmd
+.\venv\Scripts\python.exe -m pytest -v
+```
+All tests verify:
+- API endpoints & health checks
+- AWS Bedrock client payload formatting & response parsers
+- LLM Router auto-detection & graceful offline fallbacks
+- S3 Storage local filesystem fallback
+- Vector store factory & FAISS indexing
+- Clustering, Matrix aggregation, PDF parsing, and Devil's Advocate critique
+
 

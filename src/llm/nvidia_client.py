@@ -20,6 +20,13 @@ class NvidiaClient:
     _JSON_DECODER = json.JSONDecoder()
 
     @classmethod
+    def _get_chat_url(cls) -> str:
+        base = settings.NVIDIA_BASE_URL.rstrip('/')
+        if base.endswith('/chat/completions'):
+            return base
+        return f"{base}/chat/completions"
+
+    @classmethod
     def generate(
         cls,
         prompt: str,
@@ -46,7 +53,7 @@ class NvidiaClient:
         if primary_model != cls.FAST_FALLBACK_MODEL:
             models_to_try.append(cls.FAST_FALLBACK_MODEL)
 
-        url = f"{settings.NVIDIA_BASE_URL.rstrip('/')}/chat/completions"
+        url = cls._get_chat_url()
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -159,7 +166,7 @@ class NvidiaClient:
             return
 
         cand_model = model or settings.NVIDIA_MODEL
-        url = f"{settings.NVIDIA_BASE_URL.rstrip('/')}/chat/completions"
+        url = cls._get_chat_url()
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Accept": "text/event-stream",

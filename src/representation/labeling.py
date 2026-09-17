@@ -77,8 +77,9 @@ class ClusterLabelingEngine:
 
     @classmethod
     def _label_with_llm(cls, rep_papers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Query NVIDIA AI API for a standardized 2-4 word taxonomy label."""
-        if not settings.NVIDIA_API_KEY:
+        """Query LLM (Bedrock or NVIDIA) for a standardized 2-4 word taxonomy label."""
+        from src.llm.llm_router import LLMRouter
+        if not LLMRouter.is_available():
             return None
 
         paper_summaries = "\n".join([
@@ -99,12 +100,11 @@ Respond ONLY with valid JSON in this exact structure:
 {{"label": "...", "short_description": "...", "key_terms": ["...", "..."]}}
 """
         try:
-            from src.llm.nvidia_client import NvidiaClient
-            parsed = NvidiaClient.generate_json(prompt=prompt, temperature=0.2, max_tokens=1024)
+            parsed = LLMRouter.generate_json(prompt=prompt, temperature=0.2, max_tokens=1024)
             if parsed and isinstance(parsed, dict) and "label" in parsed and "short_description" in parsed:
                 return parsed
         except Exception as e:
-            logger.warning(f"NVIDIA LLM labeling failed: {e}. Falling back to TF-IDF.")
+            logger.warning(f"LLM labeling failed: {e}. Falling back to TF-IDF.")
 
         return None
 

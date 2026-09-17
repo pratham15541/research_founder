@@ -72,7 +72,6 @@ class ReportExporter:
                 lines.append(f"- **Hypothesis ($H_1$):** {rq.get('primary_hypothesis_h1')}")
                 lines.append(f"- **Null Hypothesis ($H_0$):** {rq.get('null_hypothesis_h0')}")
                 vars_dict = rq.get("variables", {})
-                lines.append(f"- **Variables:** Independent: {vars_dict.get('independent')} | Dependent: {vars_dict.get('dependent')}")
                 if isinstance(vars_dict, dict):
                     ind_v = vars_dict.get('independent', 'N/A')
                     dep_v = vars_dict.get('dependent', 'N/A')

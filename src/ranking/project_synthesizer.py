@@ -29,7 +29,8 @@ class ResearchProjectSynthesizer:
         Generate a human-readable project briefing for a detected research gap.
         Uses NVIDIA AI if configured; falls back to structured domain heuristics.
         """
-        if settings.NVIDIA_API_KEY:
+        from src.llm.llm_router import LLMRouter
+        if LLMRouter.is_available():
             llm_result = cls._synthesize_with_llm(axis_a, axis_b, neighbor_papers_a, neighbor_papers_b, cell_count)
             if llm_result:
                 return llm_result
@@ -45,7 +46,7 @@ class ResearchProjectSynthesizer:
         papers_b: List[Dict[str, Any]],
         cell_count: int
     ) -> Optional[Dict[str, str]]:
-        """Call NVIDIA AI API to synthesize a structured, plain-English research project."""
+        """Call LLM API (Bedrock or NVIDIA) to synthesize a structured, plain-English research project."""
         context_a = "\n".join([f"- {p.get('title')}" for p in papers_a[:3]])
         context_b = "\n".join([f"- {p.get('title')}" for p in papers_b[:3]])
 
@@ -73,14 +74,14 @@ Respond ONLY with a valid JSON object matching this schema:
 }}
 """
         try:
-            from src.llm.nvidia_client import NvidiaClient
-            data = NvidiaClient.generate_json(prompt=prompt, temperature=0.25, max_tokens=1024)
+            from src.llm.llm_router import LLMRouter
+            data = LLMRouter.generate_json(prompt=prompt, temperature=0.25, max_tokens=1024)
             if data and isinstance(data, dict):
                 required_keys = ["project_title", "core_research_question", "why_it_is_a_gap", "suggested_first_experiment"]
                 if all(k in data for k in required_keys):
                     return data
         except Exception as e:
-            logger.warning(f"NVIDIA LLM project synthesis failed: {e}. Falling back to domain heuristics.")
+            logger.warning(f"LLM project synthesis failed: {e}. Falling back to domain heuristics.")
 
         return None
 

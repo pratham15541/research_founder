@@ -198,7 +198,6 @@ async def analyze_topic(
             session.add(gap_rec)
 
         await session.commit()
-        results["run_id"] = run_record.id
         results["run_id"] = str(run_record.id)
         return results
     except Exception as e:
@@ -213,7 +212,6 @@ async def list_runs(session: AsyncSession = Depends(get_db_session)):
     runs = res.scalars().all()
     return [
         {
-            "run_id": r.id,
             "run_id": str(r.id),
             "query": r.query_text,
             "corpus_size": r.corpus_size,
@@ -241,7 +239,7 @@ async def chat_with_corpus(req: ChatRequest):
     """
     latest_results = getattr(app.state, "latest_results", None)
     runner = getattr(app.state, "workflow_runner", None)
-    if not latest_results or not runner or runner.faiss_index.index.ntotal == 0:
+    if not latest_results or not runner or runner.vector_index.count() == 0:
         raise HTTPException(
             status_code=400,
             detail="No indexed academic corpus available. Please execute /api/analyze first."

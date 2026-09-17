@@ -35,7 +35,8 @@ class DomainDiscoveryEngine:
             return ["Primary Applications", "Secondary Applications", "Theoretical Extensions"]
 
         # Attempt LLM-assisted domain discovery if available
-        if settings.NVIDIA_API_KEY:
+        from src.llm.llm_router import LLMRouter
+        if LLMRouter.is_available():
             llm_domains = cls._discover_with_llm(topic_query, papers, num_domains)
             if llm_domains and len(llm_domains) >= 3:
                 return llm_domains
@@ -50,7 +51,7 @@ class DomainDiscoveryEngine:
         papers: List[Dict[str, Any]],
         num_domains: int
     ) -> Optional[List[str]]:
-        """Query NVIDIA AI API to summarize the 4-5 natural application domains in the corpus."""
+        """Query LLM (Bedrock or NVIDIA) to summarize the 4-5 natural application domains in the corpus."""
         titles = [p.get("title", "") for p in papers if p.get("title")][:30]
         titles_bullet = "\n".join([f"- {t}" for t in titles])
 
@@ -65,12 +66,12 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
 ["Domain 1", "Domain 2", "Domain 3", "Domain 4", "Domain 5"]
 """
         try:
-            from src.llm.nvidia_client import NvidiaClient
-            domains = NvidiaClient.generate_json(prompt=prompt, temperature=0.2, max_tokens=1024)
+            from src.llm.llm_router import LLMRouter
+            domains = LLMRouter.generate_json(prompt=prompt, temperature=0.2, max_tokens=1024)
             if isinstance(domains, list) and len(domains) >= 3:
                 return [str(d).strip() for d in domains[:num_domains]]
         except Exception as e:
-            logger.info(f"NVIDIA LLM domain discovery fallback ({e}). Using unsupervised phrase clustering.")
+            logger.info(f"LLM domain discovery fallback ({e}). Using unsupervised phrase clustering.")
 
         return None
 
@@ -162,9 +163,14 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
         paper_texts = [f"{p.get('title', '')} {p.get('abstract', '')[:200]}" for p in papers]
         paper_embs = embedder.embed_texts(paper_texts)
 
-        # Normalize for cosine similarity
-        norm_domain = domain_embs / np.linalg.norm(domain_embs, axis=1, keepdims=True)
-        norm_paper = paper_embs / np.linalg.norm(paper_embs, axis=1, keepdims=True)
+        # Normalize for cosine similarity with zero-norm protection
+        d_norms = np.linalg.norm(domain_embs, axis=1, keepdims=True)
+        d_norms[d_norms == 0] = 1e-10
+        norm_domain = domain_embs / d_norms
+
+        p_norms = np.linalg.norm(paper_embs, axis=1, keepdims=True)
+        p_norms[p_norms == 0] = 1e-10
+        norm_paper = paper_embs / p_norms
 
         sims = np.dot(norm_paper, norm_domain.T)  # Shape (N, num_domains)
         best_domain_indices = np.argmax(sims, axis=1)

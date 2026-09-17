@@ -19,6 +19,7 @@ from sqlalchemy import (
     Uuid
 )
 from sqlalchemy.orm import declarative_base, relationship
+from src.config import settings
 
 # Try importing pgvector Vector type, with fallback for SQLite testing
 try:
@@ -27,6 +28,13 @@ try:
 except ImportError:
     HAS_PGVECTOR = False
     Vector = None
+
+# Determine vector column dimension: 1024 if AWS Bedrock Titan is configured, else EMBEDDING_DIMENSION
+_pgvector_dim = (
+    1024
+    if (settings.USE_AWS and "titan" in settings.AWS_BEDROCK_EMBEDDING_MODEL_ID.lower() and settings.EMBEDDING_DIMENSION == 384)
+    else settings.EMBEDDING_DIMENSION
+)
 
 Base = declarative_base()
 
@@ -74,9 +82,9 @@ class PaperEmbedding(Base):
 
     paper_id = Column(Uuid, ForeignKey("papers.id", ondelete="CASCADE"), primary_key=True)
     
-    # Use Vector(384) if pgvector is active, otherwise fallback to JSON array
+    # Use dynamic Vector dimension if pgvector is active, otherwise fallback to JSON array
     if HAS_PGVECTOR and Vector is not None:
-        embedding = Column(Vector(384), nullable=False)
+        embedding = Column(Vector(_pgvector_dim), nullable=False)
     else:
         embedding = Column(JSON, nullable=False)
 

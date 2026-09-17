@@ -218,7 +218,7 @@ if run_btn and topic_query:
 
             st.session_state.analysis_results = results
             st.session_state.chat_history = []
-            st.success(f"Analysis complete! Mapped {results["corpus_size"]} papers across dynamic dimensions.")
+            st.success(f"Analysis complete! Mapped {results['corpus_size']} papers across dynamic dimensions.")
         except Exception as e:
             st.error(f"Error during analysis: {e}")
 
@@ -231,7 +231,7 @@ if st.session_state.analysis_results:
     with col1:
         st.metric("Total Papers Mapped", res.get("corpus_size", 0))
     with col2:
-        st.metric("Silhouette Cohesion", f"{res.get("silhouette_score", 0.0)}", f"Method: {res.get("cluster_method", "N/A")}")
+        st.metric("Silhouette Cohesion", f"{res.get('silhouette_score', 0.0)}", f"Method: {res.get('cluster_method', 'N/A')}")
     with col3:
         st.metric("Discovered Methods (Axis A)", len(res.get("discovered_clusters", {})))
     with col4:
@@ -268,23 +268,23 @@ if st.session_state.analysis_results:
             st.warning("No high-potential candidate gaps met the structural adjacency threshold. Try increasing the corpus target size.")
 
         for rank_idx, dossier in enumerate(ranked_gaps):
-            proj_title = dossier.get("project_title") or f"{dossier["axis_a"]} in {dossier["axis_b"]}"
-            core_q = dossier.get("core_research_question") or f"How can {dossier["axis_a"]} be integrated into {dossier["axis_b"]}?"
+            proj_title = dossier.get("project_title") or f"{dossier['axis_a']} in {dossier['axis_b']}"
+            core_q = dossier.get("core_research_question") or f"How can {dossier['axis_a']} be integrated into {dossier['axis_b']}?"
             why_gap = dossier.get("why_it_is_a_gap") or dossier.get("feasibility_rationale", "")
             exp_steps = dossier.get("suggested_first_experiment") or "Benchmark against standard open-source datasets in this domain."
             impact_desc = dossier.get("practical_impact") or "Bridges two isolated research communities with high potential for novel publication."
 
             with st.container(border=True):
                 # Header row with badges
-                st.caption(f":orange[**RESEARCH GAP #{rank_idx + 1}**] &nbsp; | &nbsp; 🔬 **Discovered Method:** `{dossier["axis_a"]}` &nbsp; | &nbsp; 🎯 **Discovered Domain:** `{dossier["axis_b"]}`")
+                st.caption(f":orange[**RESEARCH GAP #{rank_idx + 1}**] &nbsp; | &nbsp; 🔬 **Discovered Method:** `{dossier['axis_a']}` &nbsp; | &nbsp; 🎯 **Discovered Domain:** `{dossier['axis_b']}`")
                 st.subheader(f"📌 {proj_title}")
 
                 # Metrics row
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Opportunity Score", f"{dossier["composite_score"]}/5.0")
-                m2.metric("Novelty Score", f"{dossier["novelty_score"]}/5.0")
-                m3.metric("Feasibility Score", f"{dossier["feasibility_score"]}/5.0")
-                m4.metric("Impact Potential", f"{dossier["impact_score"]}/5.0")
+                m1.metric("Opportunity Score", f"{dossier['composite_score']}/5.0")
+                m2.metric("Novelty Score", f"{dossier['novelty_score']}/5.0")
+                m3.metric("Feasibility Score", f"{dossier['feasibility_score']}/5.0")
+                m4.metric("Impact Potential", f"{dossier['impact_score']}/5.0")
 
                 st.markdown("##### ❓ Core Research Hypothesis / Question")
                 st.info(f"*{core_q}*")
@@ -295,7 +295,7 @@ if st.session_state.analysis_results:
                 st.markdown("##### 🧪 Suggested First Experiment (Kickoff Plan)")
                 st.markdown(f"**Step-by-step action:** {exp_steps}")
 
-                st.error(f"🚨 **Devil's Advocate Reality Check (Potential Failure Modes):**\n\n{dossier["counter_argument"]}")
+                st.error(f"🚨 **Devil's Advocate Reality Check (Potential Failure Modes):**\n\n{dossier['counter_argument']}")
 
                 if impact_desc:
                     st.caption(f"🌍 **Broader Impact:** {impact_desc}")
@@ -309,8 +309,8 @@ if st.session_state.analysis_results:
                     evidence_list = dossier.get("supporting_evidence", [])
                     if evidence_list:
                         for ev in evidence_list:
-                            link_url = ev.get("source_url") or f"https://doi.org/{ev.get("paper_id", "")}"
-                            st.markdown(f"- **[{ev.get("title")}]({link_url})** ({ev.get("year")}) — *{ev.get("role")}*")
+                            link_url = ev.get("source_url") or f"https://doi.org/{ev.get('paper_id', '')}"
+                            st.markdown(f"- **[{ev.get('title')}]({link_url})** ({ev.get('year')}) — *{ev.get('role')}*")
                     else:
                         st.write("Neighbor evidence compiled from corpus matrix.")
 
@@ -363,14 +363,14 @@ if st.session_state.analysis_results:
             sparsity_badge = "⚠️ Sparse Gap Opportunity (Low literature count)" if target_cell["is_sparse"] else "✅ Well-Studied / Saturated"
             st.info(
                 f"**Cell**: '{sel_axis_a}' × '{sel_axis_b}' | "
-                f"**Paper Count**: {target_cell["paper_count"]} papers | "
+                f"**Paper Count**: {target_cell['paper_count']} papers | "
                 f"**Status**: {sparsity_badge}"
             )
             if target_cell["papers"]:
                 st.markdown("**Published Papers in this exact cell:**")
                 for p in target_cell["papers"][:5]:
-                    url = p.get("source_url") or f"https://doi.org/{p.get("doi", "")}"
-                    st.markdown(f"- **[{p.get("title")}]({url})** ({p.get("year")}) — Citations: {p.get("citation_count")}")
+                    url = p.get("source_url") or f"https://doi.org/{p.get('doi', '')}"
+                    st.markdown(f"- **[{p.get('title')}]({url})** ({p.get('year')}) — Citations: {p.get('citation_count')}")
             else:
                 st.write("Zero papers exist in this intersection. This represents an empirical void in the retrieved corpus.")
 
@@ -399,8 +399,12 @@ if st.session_state.analysis_results:
                 if msg.get("citations"):
                     with st.expander("📚 Grounded Citations & Retrieved Chunks", expanded=False):
                         for c in msg["citations"]:
-                            st.markdown(f"- **{c.get("paper_title")}** `[{c.get("section_type")}]`")
-                            st.caption(f"\"{c.get("snippet")}\"")
+                            c_title = c.get("paper_title") or c.get("title", "Untitled Publication")
+                            c_sec = c.get("section_type") or c.get("section", "excerpt")
+                            c_snip = c.get("snippet") or c.get("text", "")
+                            st.markdown(f"- **{c_title}** `[{c_sec}]`")
+                            if c_snip:
+                                st.caption(f'"{c_snip}"')
 
         # Chat input box
         user_query_input = st.chat_input("Ask a research question (e.g., 'What are the main convergence issues reported in Navier-Stokes PINNs?')")
@@ -431,10 +435,10 @@ if st.session_state.analysis_results:
                     else:
                         # Direct in-process RAG
                         runner = st.session_state.workflow_runner
-                        if runner and runner.faiss_index.index.ntotal > 0:
+                        if runner and runner.vector_index.count() > 0:
                             rag_res = RAGEngine.query(
                                 user_query=user_query_input,
-                                faiss_index=runner.faiss_index,
+                                faiss_index=runner.vector_index,
                                 embedder=runner.embedder,
                                 top_k=4
                             )
@@ -447,8 +451,12 @@ if st.session_state.analysis_results:
                     if citations_list:
                         with st.expander("📚 Grounded Citations & Retrieved Chunks", expanded=False):
                             for c in citations_list:
-                                st.markdown(f"- **{c.get("paper_title")}** `[{c.get("section_type")}]`")
-                                st.caption(f"\"{c.get("snippet")}\"")
+                                c_title = c.get("paper_title") or c.get("title", "Untitled Publication")
+                                c_sec = c.get("section_type") or c.get("section", "excerpt")
+                                c_snip = c.get("snippet") or c.get("text", "")
+                                st.markdown(f"- **{c_title}** `[{c_sec}]`")
+                                if c_snip:
+                                    st.caption(f'"{c_snip}"')
 
                     st.session_state.chat_history.append({
                         "role": "assistant",
@@ -464,30 +472,39 @@ if st.session_state.analysis_results:
         lit_review = res.get("literature_review", {})
         if lit_review:
             # Executive Summary
-            st.markdown("### 📋 Executive Summary")
-            st.write(lit_review.get("executive_summary", "No summary available."))
-
-            st.divider()
+            exec_sum = lit_review.get("executive_summary")
+            if exec_sum:
+                st.markdown("### 📋 Executive Summary")
+                st.write(exec_sum)
+                st.divider()
 
             # Thematic Breakdown
-            st.markdown("### 🧩 Thematic Breakdown Across Discovered Clusters")
             thematic_themes = lit_review.get("thematic_breakdown", [])
-            for theme in thematic_themes:
-                with st.container(border=True):
-                    st.subheader(f"Theme: {theme.get("cluster_name")}")
-                    st.markdown(f"**Description & Patterns:** {theme.get("description")}")
-                    st.markdown(f"**Key Publications:** {", ".join(theme.get("key_papers", []))}")
-                    st.info(f"**Reported Limitations:** {theme.get("reported_limitations")}")
-
-            st.divider()
+            if thematic_themes:
+                st.markdown("### 🧩 Thematic Breakdown Across Discovered Clusters")
+                for theme in thematic_themes:
+                    with st.container(border=True):
+                        st.subheader(f"Theme: {theme.get('cluster_name')}")
+                        st.markdown(f"**Description & Patterns:** {theme.get('description')}")
+                        st.markdown(f"**Key Publications:** {', '.join(theme.get('key_papers', []))}")
+                        st.info(f"**Reported Limitations:** {theme.get('reported_limitations')}")
+                st.divider()
 
             # Cross-Cutting Synthesis & Voids
-            st.markdown("### 🔬 Comparative Synthesis & Open Voids")
-            st.write(lit_review.get("comparative_synthesis", ""))
-            st.warning(f"**Identified Research Voids:** {lit_review.get("identified_voids", "")}")
+            comp_syn = lit_review.get("comparative_synthesis")
+            if comp_syn:
+                st.markdown("### 🔬 Comparative Synthesis & Open Voids")
+                st.write(comp_syn)
+            voids = lit_review.get("identified_voids")
+            if voids:
+                st.warning(f"**Identified Research Voids:** {voids}")
 
-            with st.expander("📄 View & Copy Full Markdown Review"):
-                st.code(lit_review.get("review_markdown", ""), language="markdown")
+            # If structured breakdown was empty, render the markdown review
+            if not exec_sum and not thematic_themes and lit_review.get("review_markdown"):
+                st.markdown(lit_review.get("review_markdown"))
+            else:
+                with st.expander("📄 View & Copy Full Markdown Review"):
+                    st.code(lit_review.get("review_markdown", ""), language="markdown")
         else:
             st.info("Literature review synthesis is being generated or was not returned.")
 
@@ -501,19 +518,16 @@ if st.session_state.analysis_results:
             for idx, rq in enumerate(rq_list):
                 with st.container(border=True):
                     st.caption(f":blue[**RESEARCH QUESTION #{idx + 1}**]")
-                    st.subheader(f"❓ {rq.get("primary_research_question")}")
+                    st.subheader(f"❓ {rq.get('primary_research_question')}")
 
                     h_col1, h_col2 = st.columns(2)
                     with h_col1:
-                        st.success(f"**Alternative Hypothesis ($H_1$):**\n\n{rq.get("primary_hypothesis_h1")}")
+                        st.success(f"**Alternative Hypothesis ($H_1$):**\n\n{rq.get('primary_hypothesis_h1')}")
                     with h_col2:
-                        st.info(f"**Null Hypothesis ($H_0$):**\n\n{rq.get("null_hypothesis_h0")}")
+                        st.info(f"**Null Hypothesis ($H_0$):**\n\n{rq.get('null_hypothesis_h0')}")
 
                     st.markdown("##### 📊 Variables")
                     v_dict = rq.get("variables", {})
-                    st.markdown(f"- **Independent Variables:** {v_dict.get("independent", "N/A")}")
-                    st.markdown(f"- **Dependent Variables:** {v_dict.get("dependent", "N/A")}")
-                    st.markdown(f"- **Control Variables:** {v_dict.get("controlled", "N/A")}")
                     if isinstance(v_dict, dict):
                         indep = v_dict.get("independent", "N/A")
                         dep = v_dict.get("dependent", "N/A")
@@ -525,15 +539,8 @@ if st.session_state.analysis_results:
                     st.markdown(f"- **Control Variables:** {ctrl}")
 
                     st.markdown("##### 🧪 Three-Phase Experimental Execution")
-                    exp_phases = rq.get("experimental_phases", {})
                     exp_phases = rq.get("experimental_phases", [])
                     p1, p2, p3 = st.columns(3)
-                    with p1:
-                        st.markdown(f"**Phase 1: Baselines**\n\n{exp_phases.get("phase_1_baseline_setup")}")
-                    with p2:
-                        st.markdown(f"**Phase 2: Hybridization**\n\n{exp_phases.get("phase_2_hybridization")}")
-                    with p3:
-                        st.markdown(f"**Phase 3: Validation**\n\n{exp_phases.get("phase_3_stress_testing")}")
                     if isinstance(exp_phases, list):
                         phase1 = exp_phases[0] if len(exp_phases) > 0 else "N/A"
                         phase2 = exp_phases[1] if len(exp_phases) > 1 else "N/A"
@@ -554,8 +561,9 @@ if st.session_state.analysis_results:
                     else:
                         st.markdown(str(exp_phases))
 
-                    st.caption(f"🌟 **Expected Scientific Contribution:** {rq.get("expected_contributions")}")
-                    st.caption(f"🌟 **Expected Scientific Contribution:** {rq.get('expected_contributions')}")
+                    contrib = rq.get("expected_contributions") or rq.get("expected_contribution", "")
+                    if contrib:
+                        st.caption(f"🌟 **Expected Scientific Contribution:** {contrib}")
         else:
             st.info("No research question protocols generated yet.")
 
@@ -569,18 +577,18 @@ if st.session_state.analysis_results:
 
         e_col1, e_col2, e_col3 = st.columns(3)
         with e_col1:
-            st.metric("Silhouette Cohesion Score", f"{eval_data.get("silhouette_score", 0.0)}", "Intrinsic Cluster Quality")
+            st.metric("Silhouette Cohesion Score", f"{eval_data.get('silhouette_score', 0.0)}", "Intrinsic Cluster Quality")
         with e_col2:
-            st.metric("Topic Coherence (C_v proxy)", f"{eval_data.get("topic_coherence", 0.0)}", "Term Semantic Relatedness")
+            st.metric("Topic Coherence (C_v proxy)", f"{eval_data.get('topic_coherence', 0.0)}", "Term Semantic Relatedness")
         with e_col3:
-            st.metric("Topic Diversity", f"{eval_data.get("topic_diversity", 0.0)}", "Ratio of Unique Topic Terms")
+            st.metric("Topic Diversity", f"{eval_data.get('topic_diversity', 0.0)}", "Ratio of Unique Topic Terms")
 
         st.markdown("#### 🎯 Extrinsic Retrieval Performance (Corpus Grounding)")
         r_col1, r_col2, r_col3 = st.columns(3)
         with r_col1:
-            st.metric("Precision@K", f"{retrieval_data.get("precision_at_k", 0.0)}")
+            st.metric("Precision@K", f"{retrieval_data.get('precision_at_k', 0.0)}")
         with r_col2:
-            st.metric("Recall@K", f"{retrieval_data.get("recall_at_k", 0.0)}")
+            st.metric("Recall@K", f"{retrieval_data.get('recall_at_k', 0.0)}")
         with r_col3:
             f1_val = retrieval_data.get("f1_score", retrieval_data.get("f1_at_k", 0.0))
             st.metric("F1 Score", f"{f1_val}")
@@ -590,7 +598,7 @@ if st.session_state.analysis_results:
         # Human Evaluation Section
         st.markdown("#### 🧑‍🔬 Human Evaluation Scorecard (Expert Feedback)")
         with st.form("human_eval_form"):
-            gap_choices = [f"#{idx+1}: {g.get("project_title", g["axis_a"] + " × " + g["axis_b"])}" for idx, g in enumerate(res.get("ranked_gaps", []))]
+            gap_choices = [f"#{idx+1}: {g.get('project_title', g['axis_a'] + ' × ' + g['axis_b'])}" for idx, g in enumerate(res.get("ranked_gaps", []))]
             selected_gap_label = st.selectbox("Select Research Gap Dossier to Rate:", gap_choices) if gap_choices else None
 
             f_col1, f_col2, f_col3 = st.columns(3)
@@ -635,11 +643,11 @@ if st.session_state.analysis_results:
             with a_col1:
                 st.metric("Total Expert Reviews", agg["total_ratings"])
             with a_col2:
-                st.metric("Mean Relevance", f"{agg["mean_relevance"]}/5.0")
+                st.metric("Mean Relevance", f"{agg['mean_relevance']}/5.0")
             with a_col3:
-                st.metric("Mean Novelty", f"{agg["mean_novelty"]}/5.0")
+                st.metric("Mean Novelty", f"{agg['mean_novelty']}/5.0")
             with a_col4:
-                st.metric("Hallucination Rate", f"{agg["hallucination_rate_percent"]}%")
+                st.metric("Hallucination Rate", f"{agg['hallucination_rate_percent']}%")
 
     # Tab 8: Multi-Format Report Exporter
     with tab_export:
@@ -647,6 +655,7 @@ if st.session_state.analysis_results:
         st.markdown("Download publication-ready briefings and drafts in academic formats.")
 
         topic_str = res.get("topic_query", "Research_Topic")
+        topic_clean = topic_str.replace(" ", "_")
         lit_rev_obj = res.get("literature_review")
         rq_objs = res.get("research_questions")
 
@@ -660,7 +669,7 @@ if st.session_state.analysis_results:
             st.download_button(
                 label="📥 Download Markdown Dossier (.md)",
                 data=md_text,
-                file_name=f"ResearchGapAI_{topic_str.replace(" ", "_")}.md",
+                file_name=f"ResearchGapAI_{topic_clean}.md",
                 mime="text/markdown"
             )
             st.caption("Standard Markdown format with headers, tables, and clickable references.")
@@ -668,7 +677,7 @@ if st.session_state.analysis_results:
             st.download_button(
                 label="📥 Download IEEE Conference Paper (.tex)",
                 data=tex_text,
-                file_name=f"ResearchGapAI_{topic_str.replace(" ", "_")}.tex",
+                file_name=f"ResearchGapAI_{topic_clean}.tex",
                 mime="application/x-latex"
             )
             st.caption("Ready-to-compile IEEEtran 2-column LaTeX document with abstract & sections.")
@@ -676,7 +685,7 @@ if st.session_state.analysis_results:
             st.download_button(
                 label="📥 Download Standalone Printable (.html)",
                 data=html_text,
-                file_name=f"ResearchGapAI_{topic_str.replace(" ", "_")}.html",
+                file_name=f"ResearchGapAI_{topic_clean}.html",
                 mime="text/html"
             )
             st.caption("Self-contained HTML briefing with embedded responsive styles.")

@@ -20,7 +20,8 @@ class ResearchQuestionGenerator:
         gap: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Generate formal hypotheses and experimental variable protocols for a gap."""
-        if settings.NVIDIA_API_KEY:
+        from src.llm.llm_router import LLMRouter
+        if LLMRouter.is_available():
             llm_questions = cls._generate_with_llm(gap)
             if llm_questions:
                 return llm_questions
@@ -29,7 +30,7 @@ class ResearchQuestionGenerator:
 
     @classmethod
     def _generate_with_llm(cls, gap: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Query NVIDIA AI API for formal hypothesis structure."""
+        """Query LLM API (Bedrock or NVIDIA) for formal hypothesis structure."""
         title = gap.get("project_title", f"{gap.get('axis_a')} in {gap.get('axis_b')}")
         a = gap.get("axis_a")
         b = gap.get("axis_b")
@@ -61,13 +62,13 @@ Formulate a rigorous research protocol and return a JSON object matching this ex
 }}
 """
         try:
-            from src.llm.nvidia_client import NvidiaClient
-            data = NvidiaClient.generate_json(prompt=prompt, temperature=0.25, max_tokens=1024)
+            from src.llm.llm_router import LLMRouter
+            data = LLMRouter.generate_json(prompt=prompt, temperature=0.25, max_tokens=1024)
             if data and isinstance(data, dict):
                 if "primary_research_question" in data and "primary_hypothesis_h1" in data:
                     return data
         except Exception as e:
-            logger.warning(f"NVIDIA LLM question generation failed: {e}. Using structured fallback.")
+            logger.warning(f"LLM question generation failed: {e}. Using structured fallback.")
 
         return None
 
