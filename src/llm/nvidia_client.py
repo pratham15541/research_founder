@@ -17,6 +17,7 @@ class NvidiaClient:
     """Production client for NVIDIA NGC API models with automatic fallback and JSON extraction."""
 
     FAST_FALLBACK_MODEL = "meta/llama-3.2-11b-vision-instruct"
+    _JSON_DECODER = json.JSONDecoder()
 
     @classmethod
     def generate(
@@ -120,15 +121,26 @@ class NvidiaClient:
         except Exception:
             pass
 
-        # Extract largest outer JSON block {...} or [...]
-        match = re.search(r"(\{.*\}|\[.*\])", clean, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except Exception:
-                pass
+        # Extract the first balanced JSON object/list. This is more reliable than
+        # greedy regex when model output contains prose, examples, or extra braces.
+        parsed = cls._parse_embedded_json(clean)
+        if parsed is not None:
+            return parsed
 
         logger.warning("Failed to parse JSON from NVIDIA API response.")
+        return None
+
+    @classmethod
+    def _parse_embedded_json(cls, text: str) -> Optional[Any]:
+        """Parse the first valid JSON object/list embedded in model output."""
+        for idx, char in enumerate(text):
+            if char not in "[{":
+                continue
+            try:
+                parsed, _ = cls._JSON_DECODER.raw_decode(text[idx:])
+                return parsed
+            except json.JSONDecodeError:
+                continue
         return None
 
     @classmethod
@@ -179,4 +191,3 @@ class NvidiaClient:
                     yield f"[NVIDIA API returned error {r.status_code}]"
         except Exception as e:
             yield f"[Streaming error: {e}]"
-

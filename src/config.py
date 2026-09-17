@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     SILHOUETTE_GATE_THRESHOLD: float = 0.15
     SPARSITY_PERCENTAGE: float = 0.02
     MAX_UPLOAD_SIZE_MB: int = 15
+    ANALYSIS_TIMEOUT_SECONDS: int = Field(
+        default=900,
+        description="Frontend/API timeout budget for long-running research analysis requests"
+    )
 
     def ensure_directories(self) -> None:
         """Ensure necessary local storage directories exist and load key fallbacks."""

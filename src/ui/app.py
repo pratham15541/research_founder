@@ -167,19 +167,34 @@ def execute_backend_api_pipeline(query: str, saved_paths: list, corpus_size: int
     for p in saved_paths:
         with open(p, "rb") as f:
             files = {"file": (p.name, f, "application/pdf")}
-            httpx.post(f"{BACKEND_URL}/api/upload", files=files, timeout=30.0)
+            upload_resp = httpx.post(f"{BACKEND_URL}/api/upload", files=files, timeout=30.0)
+            upload_resp.raise_for_status()
 
     payload = {
         "topic_query": query,
         "target_corpus_size": corpus_size,
         "clustering_algorithm": algorithm
     }
-    with httpx.Client(timeout=180.0) as client:
-        resp = client.post(f"{BACKEND_URL}/api/analyze", json=payload)
-        if resp.status_code == 200:
+    timeout = httpx.Timeout(
+        connect=10.0,
+        read=float(settings.ANALYSIS_TIMEOUT_SECONDS),
+        write=60.0,
+        pool=10.0,
+    )
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(f"{BACKEND_URL}/api/analyze", json=payload)
+            resp.raise_for_status()
             return resp.json()
-        else:
-            raise RuntimeError(f"Backend returned error {resp.status_code}: {resp.text}")
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(
+            f"Backend analysis exceeded {settings.ANALYSIS_TIMEOUT_SECONDS} seconds. "
+            "The pipeline may still be running; reduce the corpus size or raise ANALYSIS_TIMEOUT_SECONDS."
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            f"Backend returned error {exc.response.status_code}: {exc.response.text}"
+        ) from exc
 
 # Pipeline Execution Trigger
 if run_btn and topic_query:
@@ -195,11 +210,9 @@ if run_btn and topic_query:
 
         try:
             if backend_status["connected"]:
-                results = execute_backend_api_pipeline(topic_query, saved_paths, target_corpus)
                 results = execute_backend_api_pipeline(topic_query, saved_paths, target_corpus, selected_algo)
                 st.session_state.workflow_runner = None
             else:
-                runner, results = asyncio.run(execute_in_process_pipeline(topic_query, saved_paths, target_corpus))
                 runner, results = asyncio.run(execute_in_process_pipeline(topic_query, saved_paths, target_corpus, selected_algo))
                 st.session_state.workflow_runner = runner
 

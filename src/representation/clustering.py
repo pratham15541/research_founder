@@ -33,7 +33,8 @@ class DimensionDiscoveryEngine:
                 n_neighbors=min(15, n_samples - 1),
                 min_dist=0.1,
                 metric="cosine",
-                random_state=42
+                random_state=42,
+                n_jobs=1
             )
             return reducer.fit_transform(embeddings)
         except Exception as e:
