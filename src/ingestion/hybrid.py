@@ -112,20 +112,40 @@ class HybridIngestionEngine:
         final_corpus = final_corpus[:target_corpus_size]
 
         if settings.ENABLE_FULL_TEXT_DOWNLOAD:
+            import time
+            start_enrich_time = time.time()
+            budget = float(getattr(settings, "FULL_TEXT_DOWNLOAD_BUDGET_SECONDS", 15.0))
             enriched = 0
             checked = 0
             for paper in final_corpus:
+                elapsed = time.time() - start_enrich_time
+                if elapsed >= budget:
+                    logger.info(
+                        "Full-text enrichment budget of %.1fs reached (elapsed: %.1fs); proceeding with abstracts.",
+                        budget,
+                        elapsed
+                    )
+                    break
                 if checked >= settings.FULL_TEXT_DOWNLOAD_LIMIT:
                     break
                 if paper.full_text and len(paper.full_text.strip()) >= settings.MIN_EXTRACTED_PDF_TEXT_CHARS:
                     continue
                 checked += 1
                 try:
-                    if await FullPaperDownloader.download_and_parse_full_paper(session, paper):
+                    remaining_budget = max(1.5, budget - (time.time() - start_enrich_time))
+                    if await asyncio.wait_for(
+                        FullPaperDownloader.download_and_parse_full_paper(session, paper, max_retries=1),
+                        timeout=remaining_budget
+                    ):
                         enriched += 1
                 except Exception as exc:
                     logger.info("Full-text enrichment skipped for %s: %s", paper.id, exc)
-            logger.info("Full-text enrichment checked=%s enriched=%s", checked, enriched)
+            logger.info(
+                "Full-text enrichment checked=%s enriched=%s (took %.2fs)",
+                checked,
+                enriched,
+                time.time() - start_enrich_time
+            )
 
         logger.info(
             f"Hybrid Ingestion complete: Total corpus size = {len(final_corpus)} "

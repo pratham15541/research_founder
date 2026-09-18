@@ -19,8 +19,11 @@ class ArxivRetriever(BaseRetriever):
 
     async def search(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Query arXiv Atom feed securely."""
+        import re
+        clean_q = re.sub(r"[^\w\s-]", " ", query).strip()
+        clean_q = " ".join(clean_q.split()) or "physics"
         params = {
-            "search_query": f"all:{query}",
+            "search_query": f"all:{clean_q}",
             "start": 0,
             "max_results": min(limit, 50),
             "sortBy": "relevance",
@@ -29,7 +32,7 @@ class ArxivRetriever(BaseRetriever):
 
         papers: List[Dict[str, Any]] = []
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
+            async with httpx.AsyncClient(timeout=25.0) as client:
                 response = await client.get(self.base_url, params=params)
                 if response.status_code != 200:
                     logger.warning(f"arXiv returned status {response.status_code}")
@@ -81,7 +84,7 @@ class ArxivRetriever(BaseRetriever):
                         "is_uploaded": False
                     })
         except Exception as e:
-            logger.error(f"Error fetching from arXiv: {e}")
+            logger.warning("arXiv retrieval temporarily unavailable for '%s': %s", query, e)
 
         logger.info(f"arXiv retrieved {len(papers)} valid papers for query: '{query}'")
         return papers

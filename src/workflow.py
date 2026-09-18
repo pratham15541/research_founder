@@ -1,8 +1,14 @@
 """
 Master Research Discovery Workflow.
-Coordinates the end-to-end pipeline from query expansion and hybrid retrieval to
-unsupervised dimension discovery, corpus-derived 2D matrix aggregation,
-and grounded ranking with devil's advocate critique.
+Coordinates the end-to-end evidence-grounded pipeline:
+  1. Hybrid retrieval & compounding corpus caching
+  2. Unsupervised dimension discovery (Axis A / Axis B)
+  3. Structured 15-dimension knowledge extraction per paper
+  4. Literature Evidence Graph construction
+  5. Multi-signal gap mining (repeated limitations, future directions, contradictions)
+  6. 15-category gap taxonomy candidate generation
+  7. Adversarial novelty verification & 5-pillar Devil's Advocate reality check
+  8. Calibrated confidence scoring and grounded experimental protocol formulation
 """
 
 import asyncio
@@ -21,6 +27,9 @@ from src.representation.labeling import ClusterLabelingEngine
 from src.representation.domain_discovery import DomainDiscoveryEngine
 from src.matrix.aggregator import CombinatorialMatrixAggregator
 from src.matrix.gap_filter import CandidateGapFilter
+from src.matrix.candidate_generator import MultiSignalGapGenerator
+from src.extraction.paper_extractor import AcademicPaperExtractor
+from src.graph.evidence_graph import LiteratureEvidenceGraphBuilder
 from src.ranking.ranker import GroundedGapRanker
 from src.graph.knowledge_graph import KnowledgeGraphBuilder
 from src.storage.cache import CompoundingCacheEngine
@@ -32,8 +41,9 @@ from src.evaluation.metrics import EvaluationMetricsEngine
 
 logger = logging.getLogger(__name__)
 
+
 class ResearchWorkflowRunner:
-    """End-to-end orchestrator for research landscape mapping and gap discovery."""
+    """End-to-end orchestrator for evidence-backed research landscape mapping and gap discovery."""
 
     def __init__(self):
         self.ingestion = HybridIngestionEngine()
@@ -49,7 +59,7 @@ class ResearchWorkflowRunner:
         target_corpus_size: int = 120,
         clustering_algorithm: str = "auto"
     ) -> Dict[str, Any]:
-        """Execute the full 10-step research discovery pipeline."""
+        """Execute the full multi-signal research gap discovery pipeline."""
         queries = expanded_queries or self._expand_queries(topic_query)
 
         # Step 1 & 2: Hybrid Ingestion & Compounding DB Cache
@@ -90,7 +100,7 @@ class ResearchWorkflowRunner:
             p["axis_a_tag"] = cluster_info[cid]["label"]
             p["tag_confidence"] = "high" if cid != -1 else "medium"
 
-        # Define Axis B dynamically from the retrieved papers only.
+        # Define Axis B dynamically from retrieved papers
         axis_b_labels = DomainDiscoveryEngine.discover_domains(
             topic_query=topic_query,
             papers=paper_dicts,
@@ -98,14 +108,26 @@ class ResearchWorkflowRunner:
             num_domains=5
         )
 
-        # Tag Axis B dynamically using embedding cosine similarity and confidence margins.
+        # Tag Axis B dynamically
         DomainDiscoveryEngine.tag_papers_with_domains(
             papers=paper_dicts,
             domains=axis_b_labels,
             embedder=self.embedder
         )
 
-        # Step 6: Corpus-derived 2D matrix aggregation
+        # Step 6: Structured 15-Dimension Knowledge Extraction per Paper
+        logger.info("Extracting structured research dimensions from %d papers...", len(paper_dicts))
+        structured_records = AcademicPaperExtractor.extract_corpus_records(paper_dicts)
+
+        # Step 7: Literature Evidence Graph & Signal Mining
+        logger.info("Mining evidence graph, recurring limitations, and contradictions...")
+        evidence_graph = LiteratureEvidenceGraphBuilder.build_evidence_graph(structured_records)
+        evidence_graph_html = LiteratureEvidenceGraphBuilder.export_pyvis_evidence_graph_html(evidence_graph)
+        limitation_clusters = LiteratureEvidenceGraphBuilder.mine_repeated_limitations(structured_records)
+        future_work_clusters = LiteratureEvidenceGraphBuilder.mine_recurring_future_work(structured_records)
+        contradictions = LiteratureEvidenceGraphBuilder.mine_contradictions(structured_records)
+
+        # Step 8: 2D Matrix Aggregation (Preserved for Landscape Visualization)
         matrix_result = CombinatorialMatrixAggregator.aggregate_matrix(
             papers=paper_dicts,
             axis_a_labels=axis_a_labels,
@@ -113,13 +135,17 @@ class ResearchWorkflowRunner:
             sparsity_percentage=settings.SPARSITY_PERCENTAGE
         )
 
-        # Step 7: Candidate Gap Filtering (Adjacency + Sparsity)
-        candidate_gaps = CandidateGapFilter.filter_candidate_gaps(
+        # Step 9: Multi-Signal Gap Candidate Generation (8 Signals across 15 Taxonomy Categories)
+        candidate_gaps = MultiSignalGapGenerator.generate_candidates(
+            paper_records=structured_records,
+            limitation_clusters=limitation_clusters,
+            future_work_clusters=future_work_clusters,
+            contradictions=contradictions,
             matrix_result=matrix_result,
-            dense_multiplier=3
+            max_candidates=15
         )
 
-        # Extract any future work seeds from uploaded PDFs
+        # Extract future work seeds from uploaded PDFs if any
         future_work_seeds: List[str] = []
         if uploaded_pdf_paths:
             for pdf_path in uploaded_pdf_paths:
@@ -130,23 +156,25 @@ class ResearchWorkflowRunner:
                 except Exception:
                     pass
 
-        # Step 8: Feasibility Estimation, Grounded Ranking & Adversarial Self-Critique
+        # Step 10: Adversarial Novelty Verification, 5-Pillar Challenge & Calibrated Ranking
         ranked_gaps = GroundedGapRanker.rank_candidate_gaps(
             candidate_gaps=candidate_gaps,
             matrix_result=matrix_result,
             future_work_seeds=future_work_seeds,
+            paper_records=structured_records,
+            embedder=self.embedder,
             top_k=5
         )
 
-        # Step 9 & 10: Knowledge Graph Generation
-        graph = KnowledgeGraphBuilder.build_graph(
+        # Step 11: Paper Citation Knowledge Graph Generation
+        paper_graph = KnowledgeGraphBuilder.build_graph(
             papers=paper_dicts,
             embeddings=embeddings,
             similarity_threshold=0.65
         )
-        graph_html = KnowledgeGraphBuilder.export_pyvis_html(graph)
+        paper_graph_html = KnowledgeGraphBuilder.export_pyvis_html(paper_graph)
 
-        # Step 11: Chunk corpus and index in FAISS vector store
+        # Step 12: Chunk corpus and index in FAISS vector store
         chunks = AcademicChunker.chunk_corpus(paper_dicts)
         self.faiss_index.clear()
         if chunks:
@@ -154,7 +182,7 @@ class ResearchWorkflowRunner:
             chunk_embs = self.embedder.embed_texts(chunk_texts)
             self.faiss_index.add_chunks(chunks, chunk_embs)
 
-        # Step 12: Quantitative Evaluation Metrics
+        # Step 13: Quantitative Evaluation Metrics
         topic_terms_list = [cinfo.get("key_terms", []) for cinfo in cluster_info.values()]
         topic_diversity = EvaluationMetricsEngine.calculate_topic_diversity(topic_terms_list)
         topic_coherence = EvaluationMetricsEngine.calculate_topic_coherence(topic_terms_list, self.embedder)
@@ -162,7 +190,7 @@ class ResearchWorkflowRunner:
         full_text_papers = [p for p in paper_dicts if p.get("full_text_available")]
         downloaded_pdf_papers = [p for p in paper_dicts if p.get("pdf_local_path")]
 
-        # Step 13: Literature Review Synthesis
+        # Step 14: Literature Review Synthesis
         lit_review = LiteratureReviewGenerator.generate_review(
             topic_query=topic_query,
             papers=paper_dicts,
@@ -171,7 +199,7 @@ class ResearchWorkflowRunner:
             ranked_gaps=ranked_gaps
         )
 
-        # Step 14: Evidence-Grounded Research Questions
+        # Step 15: Formal Research Questions & Experimental Protocols
         research_questions = [
             ResearchQuestionGenerator.generate_questions_for_gap(g)
             for g in ranked_gaps[:3]
@@ -187,11 +215,20 @@ class ResearchWorkflowRunner:
             "matrix": matrix_result,
             "candidate_gaps_count": int(len(candidate_gaps)),
             "ranked_gaps": ranked_gaps,
-            "graph_summary": {
-                "nodes": int(graph.number_of_nodes()),
-                "edges": int(graph.number_of_edges())
+            "structured_records": structured_records,
+            "limitation_clusters": limitation_clusters,
+            "future_work_clusters": future_work_clusters,
+            "contradictions": contradictions,
+            "evidence_graph_summary": {
+                "nodes": int(evidence_graph.number_of_nodes()),
+                "edges": int(evidence_graph.number_of_edges())
             },
-            "graph_html": graph_html,
+            "evidence_graph_html": evidence_graph_html,
+            "graph_summary": {
+                "nodes": int(paper_graph.number_of_nodes()),
+                "edges": int(paper_graph.number_of_edges())
+            },
+            "graph_html": paper_graph_html,
             "papers": paper_dicts,
             "chunks_count": len(chunks),
             "pdf_enrichment": {
@@ -224,7 +261,8 @@ Each query must be 3 to 9 words and must remain tightly relevant to the topic.""
                 parsed = NvidiaClient.generate_json(
                     prompt=prompt,
                     temperature=settings.LLM_STRUCTURED_TEMPERATURE,
-                    max_tokens=768
+                    max_tokens=768,
+                    timeout=getattr(settings, "LLM_TIMEOUT_SECONDS", 35.0)
                 )
                 if isinstance(parsed, list):
                     cleaned = []
@@ -235,8 +273,15 @@ Each query must be 3 to 9 words and must remain tightly relevant to the topic.""
                     if cleaned:
                         return [topic_query] + cleaned[:5]
             except Exception as exc:
-                logger.warning("LLM query expansion failed: %s", exc)
+                logger.warning("LLM query expansion failed: %s, using multi-dimensional heuristic expansion.", exc)
         elif settings.LLM_REQUIRED:
             raise RuntimeError("NVIDIA_API_KEY is required for query expansion because LLM_REQUIRED=true.")
 
-        return [topic_query]
+        # Robust heuristic expansion covering methods, limitations, benchmarks, and comparisons
+        return [
+            topic_query,
+            f"{topic_query} limitations",
+            f"{topic_query} benchmark evaluation",
+            f"{topic_query} architectures methods",
+            f"{topic_query} comparative study"
+        ]

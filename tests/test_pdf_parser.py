@@ -8,7 +8,10 @@ from src.ingestion.pdf_parser import AcademicPDFParser
 
 
 def _write_pdf(path: Path, text: str = "Abstract\nThis is a valid test PDF.") -> None:
-    import fitz
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
 
     doc = fitz.open()
     page = doc.new_page()

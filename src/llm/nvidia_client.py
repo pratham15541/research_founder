@@ -43,6 +43,8 @@ class NvidiaClient:
 
     @classmethod
     def _config_value(cls, key: str) -> Optional[str]:
+        if cls._DOTENV_CACHE is not None:
+            return cls._DOTENV_CACHE.get(key)
         return os.environ.get(key) or cls._dotenv_values().get(key)
 
     @staticmethod
@@ -88,6 +90,62 @@ class NvidiaClient:
         return unique
 
     @classmethod
+    def _call_provider(
+        cls,
+        provider: Dict[str, str],
+        messages: List[Dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        timeout: float
+    ) -> Optional[str]:
+        """Execute a single API request against an OpenAI-compatible provider."""
+        url = cls._completion_url(provider["base_url"])
+        cand_model = provider["model"]
+        headers = {
+            "Authorization": f"Bearer {provider['api_key']}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        payload = {
+            "model": cand_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            if res.status_code == 200:
+                data = res.json()
+                choices = data.get("choices", [])
+                if not choices:
+                    return None
+                msg = choices[0].get("message", {})
+                content = msg.get("content")
+                reasoning = msg.get("reasoning_content") or msg.get("reasoning")
+
+                # Handle models where output is placed in reasoning or content is None/empty
+                if (content is None or not str(content).strip()) and reasoning:
+                    content = reasoning
+                elif content is None:
+                    content = ""
+
+                # Strip reasoning tags <think>...</think> if model generates chain-of-thought
+                clean = re.sub(r"<think>.*?</think>", "", str(content), flags=re.DOTALL).strip()
+                return clean if clean else str(content).strip()
+            elif res.status_code == 429:
+                logger.warning("LLM provider rate-limited (429) for model '%s' at %s. Trying next configured provider.", cand_model, url)
+                return None
+            elif res.status_code == 404:
+                logger.warning("LLM model '%s' not found at %s. Trying next configured provider.", cand_model, url)
+                return None
+            else:
+                logger.warning("LLM provider error for model '%s' at %s: %s %s", cand_model, url, res.status_code, res.text[:200])
+                return None
+        except Exception as e:
+            logger.warning("LLM call with model '%s' failed or timed out: %s", cand_model, e)
+            return None
+
+    @classmethod
     def generate(
         cls,
         prompt: str,
@@ -98,7 +156,8 @@ class NvidiaClient:
         timeout: Optional[float] = None
     ) -> Optional[str]:
         """Generate text completion from the configured OpenAI-compatible provider chain."""
-        call_timeout = timeout if timeout is not None else getattr(settings, "LLM_TIMEOUT_SECONDS", 90.0)
+        configured_timeout = float(getattr(settings, "LLM_TIMEOUT_SECONDS", 45.0))
+        call_timeout = max(float(timeout or 0), configured_timeout)
         providers = cls._provider_chain(override_model=model)
         if not providers:
             if settings.LLM_REQUIRED:
@@ -112,84 +171,24 @@ class NvidiaClient:
         messages.append({"role": "user", "content": prompt})
 
         for provider in providers:
-            url = cls._completion_url(provider["base_url"])
-            cand_model = provider["model"]
-            headers = {
-                "Authorization": f"Bearer {provider['api_key']}",
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
-            payload = {
-                "model": cand_model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            try:
-                res = requests.post(url, headers=headers, json=payload, timeout=call_timeout)
-                if res.status_code == 200:
-                    data = res.json()
-                    choices = data.get("choices", [])
-                    if not choices:
-                        continue
-                    msg = choices[0].get("message", {})
-                    content = msg.get("content")
-                    reasoning = msg.get("reasoning_content")
-
-                    # Handle models where output is placed in reasoning_content or content is None
-                    if content is None and reasoning is not None:
-                        content = reasoning
-                    elif content is None:
-                        content = ""
-
-                    # Strip reasoning tags <think>...</think> if model generates chain-of-thought
-                    clean = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                    return clean if clean else content.strip()
-                elif res.status_code == 429:
-                    logger.warning("LLM provider rate-limited (429) for model '%s' at %s. Trying next configured provider.", cand_model, url)
-                    continue
-                elif res.status_code == 404:
-                    logger.warning("LLM model '%s' not found at %s. Trying next configured provider.", cand_model, url)
-                    continue
-                else:
-                    logger.warning("LLM provider error for model '%s' at %s: %s %s", cand_model, url, res.status_code, res.text[:200])
-                    continue
-            except Exception as e:
-                logger.warning("LLM call with model '%s' failed or timed out: %s", cand_model, e)
-                continue
+            result = cls._call_provider(
+                provider=provider,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=call_timeout
+            )
+            if result:
+                return result
 
         return None
 
     @classmethod
-    def generate_json(
-        cls,
-        prompt: str,
-        system_prompt: Optional[str] = None,
-        model: Optional[str] = None,
-        temperature: float = 0.35,
-        max_tokens: int = 4096,
-        timeout: Optional[float] = None
-    ) -> Optional[Any]:
-        """Generate structured JSON (object or list) via NVIDIA API with robust parsing and markdown block extraction."""
-        full_prompt = (
-            f"{prompt}\n\n"
-            "CRITICAL: Return valid JSON ONLY. "
-            "Do not include conversational preamble, apologies, or trailing notes. "
-            "Ensure the JSON is strictly parsable."
-        )
-
-        raw_text = cls.generate(
-            prompt=full_prompt,
-            system_prompt=system_prompt,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout
-        )
-        if not raw_text:
+    def _try_parse_json(cls, text: str) -> Optional[Any]:
+        """Attempt multiple extraction and parsing strategies for LLM-generated JSON."""
+        if not text:
             return None
-
-        clean = raw_text.strip()
+        clean = text.strip()
 
         # 1. Check for markdown code blocks ```json ... ``` or ``` ... ```
         code_block_match = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", clean, re.DOTALL)
@@ -220,11 +219,45 @@ class NvidiaClient:
                 pass
 
         # 4. Extract the first balanced JSON object/list embedded in model output
-        parsed = cls._parse_embedded_json(clean)
+        return cls._parse_embedded_json(clean)
+
+    @classmethod
+    def generate_json(
+        cls,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.35,
+        max_tokens: int = 4096,
+        timeout: Optional[float] = None
+    ) -> Optional[Any]:
+        """Generate structured JSON (object or list) with robust parsing and provider-chain fallback."""
+        full_prompt = (
+            f"{prompt}\n\n"
+            "CRITICAL: Return valid JSON ONLY. "
+            "Do not include conversational preamble, apologies, or trailing notes. "
+            "Ensure the JSON is strictly parsable."
+        )
+
+        configured_timeout = float(getattr(settings, "LLM_TIMEOUT_SECONDS", 45.0))
+        call_timeout = max(float(timeout or 0), configured_timeout)
+
+        raw_text = cls.generate(
+            prompt=full_prompt,
+            system_prompt=system_prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=call_timeout
+        )
+        if not raw_text:
+            return None
+
+        parsed = cls._try_parse_json(raw_text)
         if parsed is not None:
             return parsed
 
-        logger.warning("Failed to parse JSON from NVIDIA API response.")
+        logger.warning("Failed to parse valid JSON from LLM response.")
         return None
 
     @classmethod

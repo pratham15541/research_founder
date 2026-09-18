@@ -34,7 +34,7 @@ class SemanticScholarRetriever(BaseRetriever):
         cooldown = settings.SEMANTIC_SCHOLAR_RATE_LIMIT_COOLDOWN_SECONDS
         if retry_after:
             try:
-                cooldown = max(1, int(float(retry_after)))
+                cooldown = max(5, min(int(float(retry_after)), 300))
             except ValueError:
                 pass
         cls._rate_limited_until = time.monotonic() + cooldown
@@ -43,7 +43,7 @@ class SemanticScholarRetriever(BaseRetriever):
     async def search(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search Semantic Scholar with required metadata fields."""
         if self._is_rate_limited():
-            logger.info("Semantic Scholar skipped during active rate-limit cooldown.")
+            logger.debug("Semantic Scholar skipped during active rate-limit cooldown.")
             return []
 
         params = {
@@ -56,16 +56,16 @@ class SemanticScholarRetriever(BaseRetriever):
         try:
             async with self._rate_limit_lock:
                 if self._is_rate_limited():
-                    logger.info("Semantic Scholar skipped during active rate-limit cooldown.")
+                    logger.debug("Semantic Scholar skipped during active rate-limit cooldown.")
                     return []
 
                 async with httpx.AsyncClient(timeout=15.0, headers=self.headers) as client:
                     response = await client.get(self.base_url, params=params)
                     if response.status_code == 429:
                         cooldown = self._set_rate_limit_cooldown(response.headers.get("retry-after"))
-                        logger.warning(
-                            "Semantic Scholar rate limit hit; cooling down this source for %ss. "
-                            "Other ingestion sources will continue.",
+                        logger.info(
+                            "Semantic Scholar rate limit reached; cooling down this source for %ss "
+                            "(set S2_API_KEY in .env for dedicated limits). Other ingestion sources will continue.",
                             cooldown
                         )
                         return []

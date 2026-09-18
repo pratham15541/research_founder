@@ -22,19 +22,20 @@ class ComponentFeasibilityEstimator:
         1. Dimension A profile across all populated cells where A appears (methodology maturity).
         2. Dimension B profile across all populated cells where B appears (domain data availability).
         """
-        density_table = matrix_result["density_table"]
-        axis_b_labels = matrix_result["axis_b_labels"]
-        axis_a_labels = matrix_result["axis_a_labels"]
+        density_table = matrix_result.get("density_table", {}) if matrix_result else {}
+        axis_b_labels = matrix_result.get("axis_b_labels", []) if matrix_result else []
+        axis_a_labels = matrix_result.get("axis_a_labels", []) if matrix_result else []
 
         # Component A: Volume & maturity across other B dimensions
-        a_counts = [density_table[axis_a_val][b] for b in axis_b_labels if b != axis_b_val]
+        a_row = density_table.get(axis_a_val, {})
+        a_counts = [a_row.get(b, 0) for b in axis_b_labels if b != axis_b_val]
         total_a_evidence = sum(a_counts)
-        maturity_score = min(5.0, 1.0 + (np.log1p(total_a_evidence) * 0.9))
+        maturity_score = min(5.0, 1.0 + (np.log1p(total_a_evidence) * 0.9)) if total_a_evidence > 0 else 3.2
 
         # Component B: Volume & data availability across other A dimensions
-        b_counts = [density_table[a][axis_b_val] for a in axis_a_labels if a != axis_a_val]
+        b_counts = [density_table.get(a, {}).get(axis_b_val, 0) for a in axis_a_labels if a != axis_a_val]
         total_b_evidence = sum(b_counts)
-        data_readiness_score = min(5.0, 1.0 + (np.log1p(total_b_evidence) * 0.9))
+        data_readiness_score = min(5.0, 1.0 + (np.log1p(total_b_evidence) * 0.9)) if total_b_evidence > 0 else 3.4
 
         # Estimated composite feasibility (1.0 to 5.0)
         # Weighted combination: 45% method maturity + 45% domain data readiness - 10% integration friction

@@ -12,6 +12,15 @@ from typing import Dict, Any, Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
 
+# Preferred PyMuPDF import (eliminates `fitz` deprecation warning)
+try:
+    import pymupdf as fitz
+except ImportError:
+    try:
+        import fitz
+    except ImportError:
+        fitz = None
+
 # Section matching regex patterns
 SECTION_PATTERNS = {
     "abstract": re.compile(r"^\s*(\d+[\.\s]+)?abstract\b", re.IGNORECASE),
@@ -91,9 +100,7 @@ class AcademicPDFParser:
             report["reason"] = "missing_pdf_header"
             return report
 
-        try:
-            import fitz
-        except ImportError:
+        if fitz is None:
             report["is_valid"] = True
             report["reason"] = "valid_header_parser_unavailable"
             return report
@@ -136,10 +143,8 @@ class AcademicPDFParser:
         if not validation["is_valid"]:
             raise ValueError(f"Invalid or untrusted PDF file: {file_path.name} ({validation['reason']})")
 
-        try:
-            import fitz  # PyMuPDF
-        except ImportError:
-            logger.warning("PyMuPDF (fitz) not installed. Returning empty parse result.")
+        if fitz is None:
+            logger.warning("PyMuPDF not installed. Returning empty parse result.")
             return {"title": file_path.stem, "abstract": "", "sections": {}, "full_text": ""}
 
         doc = fitz.open(file_path)

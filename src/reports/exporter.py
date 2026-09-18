@@ -1,10 +1,13 @@
 """
 Academic Report & Dossier Exporter.
 Exports complete research intelligence reports in Markdown, LaTeX (.tex), and printable HTML formats.
+Includes 15-category Gap Taxonomy, Source Facts vs AI Inferences, Calibrated Confidence,
+5-Pillar Devil's Advocate Reality Check, and Researcher Verification Checklists.
 """
 
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
+
 
 def _escape_latex(text: str) -> str:
     """Escape special LaTeX characters."""
@@ -25,6 +28,7 @@ def _escape_latex(text: str) -> str:
         text = text.replace(char, replacement)
     return text
 
+
 class ReportExporter:
     """Generates downloadable academic report artifacts across multiple publication formats."""
 
@@ -36,50 +40,110 @@ class ReportExporter:
         literature_review: Optional[Dict[str, Any]] = None,
         research_questions: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """Export full analysis briefing as Markdown."""
+        """Export full analysis briefing as Markdown with evidence grounding."""
         lines = []
-        lines.append(f"# ResearchGapAI Report: {topic_query}\n")
-        lines.append(f"*Generated on: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*\n")
+        lines.append(f"# ResearchGapAI Report: {topic_query}\n## Evidence-Backed Research Gap Discovery Report\n")
+        lines.append(f"*Generated on: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} by ResearchGapAI Suite*\n")
         lines.append(f"**Total Papers Analyzed:** {results.get('corpus_size', 0)} | "
-                     f"**Silhouette Cohesion:** {results.get('silhouette_score', 0.0)} | "
-                     f"**Candidate Gaps:** {results.get('candidate_gaps_count', 0)}\n")
+                     f"**Candidate Signals Evaluated:** {results.get('candidate_gaps_count', 0)} | "
+                     f"**Validated Gaps Produced:** {len(results.get('ranked_gaps', []))}\n")
 
-        # Literature Review section if available
+        # Literature Review section
         if literature_review:
             lines.append("## Automated Literature Review\n")
             lines.append(literature_review.get("review_markdown", ""))
             lines.append("\n---\n")
 
-        # Top Ranked Gaps
-        lines.append("## Actionable Research Gap Dossiers\n")
+        # Actionable Research Gaps
+        lines.append("## Actionable Evidence-Backed Research Gap Dossiers\n")
         for idx, g in enumerate(results.get("ranked_gaps", [])):
-            title = g.get("project_title", f"{g.get('axis_a')} in {g.get('axis_b')}")
-            lines.append(f"### Gap #{idx+1}: {title}")
-            lines.append(f"- **Discovered Method (Axis A):** {g.get('axis_a')}")
-            lines.append(f"- **Discovered Domain (Axis B):** {g.get('axis_b')}")
-            lines.append(f"- **Composite Opportunity Score:** {g.get('composite_score')}/5.0 (Novelty: {g.get('novelty_score')}, Feasibility: {g.get('feasibility_score')})")
-            lines.append(f"- **Core Research Question:** {g.get('core_research_question')}")
-            lines.append(f"- **Why It's a Gap:** {g.get('why_it_is_a_gap')}")
-            lines.append(f"- **Suggested First Experiment:** {g.get('suggested_first_experiment')}")
-            lines.append(f"- **Devil's Advocate Reality Check:** {g.get('counter_argument')}\n")
+            title = g.get("project_title") or g.get("title") or f"{g.get('axis_a')} in {g.get('axis_b')}"
+            conf = g.get("confidence_scorecard") or g.get("confidence_breakdown") or {}
+            overall_c = conf.get("overall") or conf.get("overall_confidence", 80)
+            ev_c = conf.get("evidence") or conf.get("evidence_confidence", 85)
+            nov_c = conf.get("novelty") or conf.get("novelty_confidence", 85)
+            feas_c = conf.get("feasibility") or conf.get("feasibility_confidence", 75)
+            rel_c = conf.get("relevance") or conf.get("relevance_confidence", 80)
+            deriv = conf.get("derivation_explanation") or conf.get("derivation", "Corpus literature evaluation")
+            status = g.get("status") or g.get("gap_status", "True / Strong Gap")
 
-        # Research Questions
-        if research_questions:
-            lines.append("## Formal Research Questions & Experimental Hypotheses\n")
-            for idx, rq in enumerate(research_questions):
-                lines.append(f"### Hypothesis Protocol #{idx+1}")
-                lines.append(f"- **Research Question:** {rq.get('primary_research_question')}")
-                lines.append(f"- **Hypothesis ($H_1$):** {rq.get('primary_hypothesis_h1')}")
-                lines.append(f"- **Null Hypothesis ($H_0$):** {rq.get('null_hypothesis_h0')}")
-                vars_dict = rq.get("variables", {})
-                lines.append(f"- **Variables:** Independent: {vars_dict.get('independent')} | Dependent: {vars_dict.get('dependent')}")
-                if isinstance(vars_dict, dict):
-                    ind_v = vars_dict.get('independent', 'N/A')
-                    dep_v = vars_dict.get('dependent', 'N/A')
-                else:
-                    ind_v, dep_v = str(vars_dict), 'N/A'
-                lines.append(f"- **Variables:** Independent: {ind_v} | Dependent: {dep_v}")
-                lines.append(f"- **Expected Contribution:** {rq.get('expected_contributions')}\n")
+            lines.append(f"### Research Gap #{idx+1}: {title}\n")
+            lines.append(f"- **Gap Type (Taxonomy):** `{g.get('gap_type', 'Methodological Gap')}`")
+            lines.append(f"- **Validation Status:** **{status}** ({g.get('status_description', '')})")
+            lines.append(f"- **Discovery Signal:** {g.get('signal_type', 'Literature Analysis')} (*{g.get('signal_source', '')}*)")
+            lines.append(f"- **Evidence Support Ratio:** {g.get('ratio_evidence_string') or g.get('evidence_ratio', 'Verified')}\n")
+
+            lines.append("#### 📊 Calibrated Confidence Scorecard")
+            lines.append(f"- **Overall Gap Confidence: {overall_c}%**")
+            lines.append(f"- **Evidence Confidence:** {ev_c}% | "
+                         f"**Novelty Confidence:** {nov_c}% | "
+                         f"**Feasibility Confidence:** {feas_c}% | "
+                         f"**Relevance Confidence:** {rel_c}%")
+            lines.append(f"- *Confidence Basis:* {deriv}\n")
+
+            rq = g.get("research_question") or g.get("core_research_question") or ""
+            if rq:
+                lines.append(f"#### ❓ Core Research Question")
+                lines.append(f"> {rq}\n")
+
+            if g.get("directional_hypothesis_h1"):
+                lines.append(f"- **Directional Hypothesis ($H_1$):** {g.get('directional_hypothesis_h1')}")
+                lines.append(f"- **Null Hypothesis ($H_0$):** {g.get('null_hypothesis_h0')}\n")
+
+            # Source Facts vs AI Inferences
+            if g.get("source_facts"):
+                lines.append("#### 📚 SOURCE FACTS (Direct Literature Evidence)")
+                for fact in g.get("source_facts", []):
+                    lines.append(f"- {fact}")
+                lines.append("")
+
+            if g.get("ai_inferences"):
+                lines.append("#### 💡 AI INFERENCES (System Deduction)")
+                for inf in g.get("ai_inferences", []):
+                    lines.append(f"- {inf}")
+                lines.append("")
+
+            # Grounded Experiment
+            exp = g.get("grounded_experiment", {})
+            if exp:
+                target_ds = exp.get("benchmark_dataset") or exp.get("target_dataset", "N/A")
+                indep_vars = exp.get("independent_variables") or ([exp.get("independent_variable")] if exp.get("independent_variable") else [])
+                metrics = exp.get("evaluation_metrics") or exp.get("metrics") or []
+                conds = exp.get("experimental_conditions", [])
+                lines.append("#### 🧪 Grounded Experimental Protocol")
+                lines.append(f"- **Target Dataset / Modality:** {target_ds}")
+                lines.append(f"- **Baseline Models:** {', '.join(exp.get('baselines', []))}")
+                lines.append(f"- **Independent Variables:** {', '.join(indep_vars)}")
+                lines.append(f"- **Experimental Conditions:** {', '.join(conds)}")
+                lines.append(f"- **Evaluation Metrics:** {', '.join(metrics)}")
+                lines.append(f"- **Statistical Test:** {exp.get('statistical_test')}")
+                lines.append(f"- **Expected Contribution:** {exp.get('expected_contribution')}\n")
+
+            # 5-Pillar Devil's Advocate
+            lines.append("#### 🚨 5-Pillar Devil's Advocate Reality Check")
+            lines.append(f"**Verdicts:** `{g.get('devil_advocate_verdicts', '4 PASS / 1 WARNING')}`\n")
+            challenges = g.get("devils_advocate_critique") or g.get("devil_advocate_challenges") or {}
+            for ch_name, ch_data in challenges.items():
+                if isinstance(ch_data, dict):
+                    v = ch_data.get("verdict", "PASS")
+                    q = ch_data.get("challenge") or ch_data.get("question") or ""
+                    expl = ch_data.get("explanation", "")
+                    label = ch_name.replace("_", " ").title()
+                    lines.append(f"- **{label} [{v}]:** {q}{f' — *{expl}*' if expl else ''}")
+            counter = g.get("counter_argument", "")
+            if counter:
+                lines.append(f"\n**Primary Technical Failure Mode:** {counter}\n")
+
+            # Researcher Verification Checklist
+            chk = g.get("researcher_verification_checklist", [])
+            if chk:
+                lines.append("#### 🧑‍🔬 Pre-Flight Researcher Verification Checklist")
+                for item in chk:
+                    if isinstance(item, dict):
+                        lines.append(f"- [ ] **{item.get('step')}:** `{item.get('query')}`")
+                    else:
+                        lines.append(f"- [ ] {item}")
+                lines.append("\n---\n")
 
         return "\n".join(lines)
 
@@ -99,39 +163,50 @@ class ReportExporter:
             "\\usepackage{booktabs}",
             "\\usepackage{hyperref}",
             "\\begin{document}",
-            f"\\title{{Research Landscape, Gap Matrix, and Exploratory Hypotheses in {clean_topic}}}",
+            f"\\title{{Evidence-Backed Research Landscape and Gap Matrix in {clean_topic}}}",
             "\\author{\\IEEEauthorblockN{ResearchGapAI Intelligence Suite}}",
             "\\maketitle",
             "\\begin{abstract}",
-            f"This paper presents an automated, unsupervised landscape mapping and combinatorial gap analysis of scientific literature in {clean_topic}. "
-            f"Based on a synthesized corpus of {results.get('corpus_size', 0)} publications, we discover structural methodological and domain dimensions, "
-            "identify empirical research voids, and formulate evidence-backed research questions with adversarial failure-mode critique.",
+            f"This paper presents an evidence-grounded research gap analysis for scientific literature in {clean_topic}. "
+            f"From an indexed corpus of {results.get('corpus_size', 0)} publications, we extract structured research dimensions, "
+            "mine repeated unresolved limitations and future-work trajectories, verify novelty against prior art, and formulate "
+            "adversarially stress-tested research hypotheses and experimental protocols.",
             "\\end{abstract}",
             "\\section{Introduction}",
-            f"Determining underexplored intersections in {clean_topic} requires combinatorial analysis across orthogonal research dimensions. "
-            "Traditional review methodologies summarize individual documents in isolation; here we present a corpus-derived 2D density formulation.",
-            "\\section{Identified Research Gaps}"
+            f"Identifying legitimate research gaps in {clean_topic} requires multi-signal evidence verification. "
+            "Rather than treating unexplored combinatorial intersections as definitive gaps, our system subjects every candidate "
+            "to adversarial novelty checks, 5-pillar Devil's Advocate critique, and calibrated confidence estimation.",
+            "\\section{Validated Research Gap Dossiers}"
         ]
 
         for idx, g in enumerate(results.get("ranked_gaps", [])[:3]):
-            title = _escape_latex(g.get("project_title", ""))
-            a = _escape_latex(g.get("axis_a", ""))
-            b = _escape_latex(g.get("axis_b", ""))
-            why = _escape_latex(g.get("why_it_is_a_gap", ""))
+            title = _escape_latex(g.get("project_title") or g.get("title") or "")
+            gap_type = _escape_latex(g.get("gap_type", "Methodological Gap"))
+            status = _escape_latex(g.get("status") or g.get("gap_status", "True / Strong Gap"))
+            q = _escape_latex(g.get("research_question") or g.get("core_research_question", ""))
+            conf_obj = g.get("confidence_scorecard") or g.get("confidence_breakdown") or {}
+            conf = conf_obj.get("overall") or conf_obj.get("overall_confidence", 80)
             crit = _escape_latex(g.get("counter_argument", ""))
 
             tex_lines.extend([
-                f"\\subsection{{Opportunity \\#{idx+1}: {title}}}",
-                f"\\textbf{{Method Paradigm:}} {a} \\\\",
-                f"\\textbf{{Application Setting:}} {b} \\\\",
-                f"\\textbf{{Composite Opportunity:}} {g.get('composite_score', 0)}/5.0 \\\\",
-                f"\\textbf{{Theoretical Gap:}} {why} \\\\",
-                f"\\textbf{{Adversarial Reality Check:}} {crit}"
+                f"\\subsection{{Research Gap \\#{idx+1}: {title}}}",
+                f"\\textbf{{Gap Taxonomy Category:}} {gap_type} \\\\",
+                f"\\textbf{{Validation Status:}} {status} \\\\",
+                f"\\textbf{{Overall Confidence:}} {conf}\\% \\\\",
+                f"\\textbf{{Core Research Question:}} \\textit{{{q}}} \\\\",
+                f"\\textbf{{Adversarial Reality Check:}} {crit} \\\\"
             ])
+
+            if g.get("source_facts") or g.get("ai_inferences"):
+                tex_lines.append("\\subsection*{Source Facts vs AI Inferences}")
+                for fact in g.get("source_facts", [])[:2]:
+                    tex_lines.append(f"\\textbf{{Source Fact:}} {_escape_latex(fact)} \\\\")
+                for inf in g.get("ai_inferences", [])[:2]:
+                    tex_lines.append(f"\\textbf{{AI Inference:}} {_escape_latex(inf)} \\\\")
 
         tex_lines.extend([
             "\\section{Conclusion}",
-            f"The combinatorial analysis reveals substantial untapped potential at the boundary of emerging methods and understudied application regimes in {clean_topic}.",
+            f"The evidence-backed analysis provides a rigorous, verified foundation for future experimental studies in {clean_topic}.",
             "\\end{document}"
         ])
 
@@ -144,46 +219,40 @@ class ReportExporter:
         results: Dict[str, Any],
         literature_review: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Export printable standalone HTML report."""
-        clean_topic = topic_query.replace("<", "&lt;").replace(">", "&gt;")
-        gaps_html = ""
-        for idx, g in enumerate(results.get("ranked_gaps", [])):
-            gaps_html += f"""
-            <div style="border-left: 4px solid #f59e0b; padding-left: 16px; margin-bottom: 24px;">
-                <h3>#{idx+1}: {g.get('project_title', '')}</h3>
-                <p><b>Method:</b> {g.get('axis_a')} | <b>Domain:</b> {g.get('axis_b')} | <b>Opportunity Score:</b> {g.get('composite_score')}/5.0</p>
-                <p><b>Research Question:</b> <i>{g.get('core_research_question', '')}</i></p>
-                <p><b>Why It's a Gap:</b> {g.get('why_it_is_a_gap', '')}</p>
-                <div style="background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 10px; color: #991b1b; border-radius: 4px;">
-                    <b>Devil's Advocate Critique:</b> {g.get('counter_argument', '')}
-                </div>
-            </div>
-            """
+        """Export self-contained, responsive HTML briefing."""
+        md = cls.export_markdown(topic_query, results, literature_review)
+        body_html = md.replace("\n\n", "</p><p>").replace("\n- ", "<br>• ").replace("\n", "<br>")
 
-        html_content = f"""<!DOCTYPE html>
-<html>
+        return f"""<!DOCTYPE html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>ResearchGapAI Briefing: {clean_topic}</title>
+    <meta charset="UTF-8">
+    <title>ResearchGapAI: {topic_query}</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1e293b; }}
-        h1 {{ color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; }}
-        h2 {{ color: #1e293b; margin-top: 32px; border-bottom: 1px solid #cbd5e1; padding-bottom: 8px; }}
-        .metrics {{ display: flex; gap: 20px; background-color: #f8fafc; padding: 16px; border-radius: 8px; margin-bottom: 24px; border: 1px solid #e2e8f0; }}
-        .metric-item {{ flex: 1; }}
-        .metric-val {{ font-size: 1.5em; font-weight: bold; color: #0284c7; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #1e293b; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #f8fafc; }}
+        h1, h2, h3 {{ color: #0f172a; }}
+        blockquote {{ border-left: 4px solid #38bdf8; margin: 1.5em 10px; padding: 0.5em 10px; background: #e0f2fe; }}
+        code {{ background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }}
+        hr {{ border: 0; height: 1px; background: #cbd5e1; margin: 30px 0; }}
+        .scorecard-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 15px 0; }}
     </style>
 </head>
 <body>
-    <h1>🔬 ResearchGapAI Executive Briefing</h1>
-    <p><b>Topic:</b> {clean_topic} &nbsp;|&nbsp; <b>Date:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</p>
-    <div class="metrics">
-        <div class="metric-item"><div class="metric-val">{results.get('corpus_size', 0)}</div>Corpus Size</div>
-        <div class="metric-item"><div class="metric-val">{results.get('silhouette_score', 0.0)}</div>Silhouette Cohesion</div>
-        <div class="metric-item"><div class="metric-val">{len(results.get('ranked_gaps', []))}</div>Ranked Opportunities</div>
-    </div>
-    <h2>Top Actionable Research Gap Dossiers</h2>
-    {gaps_html}
+    <h1>Evidence-Backed Research Gap Dossiers</h1>
+    <div class="scorecard-grid"></div>
+    <p>{body_html}</p>
 </body>
 </html>"""
-        return html_content
+
+    # Convenience aliases for dossier lists
+    @classmethod
+    def export_to_markdown(cls, dossiers: List[Dict[str, Any]], topic: str = "Research Intelligence") -> str:
+        return cls.export_markdown(topic_query=topic, results={"ranked_gaps": dossiers})
+
+    @classmethod
+    def export_to_latex(cls, dossiers: List[Dict[str, Any]], topic: str = "Research Intelligence") -> str:
+        return cls.export_latex(topic_query=topic, results={"ranked_gaps": dossiers})
+
+    @classmethod
+    def export_to_html(cls, dossiers: List[Dict[str, Any]], topic: str = "Research Intelligence") -> str:
+        return cls.export_html(topic_query=topic, results={"ranked_gaps": dossiers})

@@ -86,6 +86,8 @@ class FullPaperDownloader:
         pdf_urls = await cls._resolve_pdf_candidates(paper_dict)
         if not pdf_urls:
             return False
+        # Limit candidate URLs to top 2 to avoid cycling through dead publisher domains
+        pdf_urls = pdf_urls[:2]
 
         logger.info(
             "Downloading full-text PDF for '%s...' using %s candidate URL(s)",
@@ -101,41 +103,59 @@ class FullPaperDownloader:
             "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.2"
         }
 
-        # Download with proxy rotation and direct fallback. Some publishers reject
-        # free proxies even when the URL is a valid PDF.
+        # Download with direct-first fallback. If direct fails or times out,
+        # paywalled/dead publisher domains are fast-skipped.
         downloaded = False
         for pdf_url in pdf_urls:
+            skip_candidate = False
             for attempt in range(max_retries):
+                if skip_candidate:
+                    break
+
                 force_proxy_refresh = attempt > 0 and attempt % max(1, settings.PROXY_REFRESH_ON_FAILURES) == 0
-                try:
-                    clients = []
-                    proxy_client = await proxy_manager.get_working_client(
-                        timeout=settings.PDF_DOWNLOAD_TIMEOUT_SECONDS,
-                        force_refresh=force_proxy_refresh,
-                        headers=headers
-                    )
 
-                    def direct_client() -> httpx.AsyncClient:
-                        return httpx.AsyncClient(
-                            timeout=settings.PDF_DOWNLOAD_TIMEOUT_SECONDS,
-                            headers=headers
-                        )
+                # Define client modes to attempt
+                modes_to_try = []
+                if settings.PDF_DOWNLOAD_DIRECT_FIRST:
+                    if settings.PROXY_USE_DIRECT_FALLBACK:
+                        modes_to_try.append("direct")
+                    modes_to_try.append("proxy")
+                else:
+                    modes_to_try.append("proxy")
+                    if settings.PROXY_USE_DIRECT_FALLBACK:
+                        modes_to_try.append("direct")
 
-                    if settings.PDF_DOWNLOAD_DIRECT_FIRST:
-                        if settings.PROXY_USE_DIRECT_FALLBACK:
-                            clients.append(("direct", direct_client()))
-                        clients.append(("proxy", proxy_client))
-                    else:
-                        clients.append(("proxy", proxy_client))
-                        if settings.PROXY_USE_DIRECT_FALLBACK:
-                            clients.append(("direct", direct_client()))
+                for mode in modes_to_try:
+                    try:
+                        if mode == "proxy":
+                            client = await proxy_manager.get_working_client(
+                                timeout=settings.PDF_DOWNLOAD_TIMEOUT_SECONDS,
+                                force_refresh=force_proxy_refresh,
+                                headers=headers
+                            )
+                        else:
+                            client = httpx.AsyncClient(
+                                timeout=settings.PDF_DOWNLOAD_TIMEOUT_SECONDS,
+                                headers=headers
+                            )
 
-                    for mode, client in clients:
                         async with client:
                             resp = await client.get(pdf_url, follow_redirects=True)
                             content_type = resp.headers.get("content-type", "").lower()
+
+                            # If server explicitly returns paywall / access denied / server error
+                            if resp.status_code in {401, 403, 404, 405, 500, 502, 503}:
+                                logger.debug(
+                                    "Candidate URL %s returned HTTP %s via %s (paywalled or restricted).",
+                                    pdf_url,
+                                    resp.status_code,
+                                    mode
+                                )
+                                skip_candidate = True
+                                break
+
                             if resp.status_code != 200 or len(resp.content) < 1000:
-                                logger.info(
+                                logger.debug(
                                     "PDF download attempt %s via %s returned status=%s bytes=%s for %s",
                                     attempt + 1,
                                     mode,
@@ -143,15 +163,20 @@ class FullPaperDownloader:
                                     len(resp.content),
                                     pdf_url
                                 )
+                                if mode == "direct":
+                                    skip_candidate = True
+                                    break
                                 continue
+
                             if "html" in content_type and not AcademicPDFParser.validate_pdf_bytes(resp.content):
-                                logger.info(
+                                logger.debug(
                                     "PDF download attempt %s via %s returned HTML for %s",
                                     attempt + 1,
                                     mode,
                                     pdf_url
                                 )
-                                continue
+                                skip_candidate = True
+                                break
 
                             if AcademicPDFParser.validate_pdf_bytes(resp.content):
                                 stored = get_file_storage_backend().save_bytes(
@@ -169,23 +194,43 @@ class FullPaperDownloader:
                                     storage_uri = stored.uri
                                     downloaded = True
                                     break
-                                logger.info("Downloaded bytes were PDF-like but invalid after inspection: %s", validation)
+                                logger.debug("Downloaded bytes were PDF-like but invalid after inspection: %s", validation)
                                 stored.local_path.unlink(missing_ok=True)
-                        if downloaded:
-                            break
-                except Exception as e:
-                    logger.warning(f"Download attempt {attempt+1} failed for {pdf_url}: {e}")
-                    if force_proxy_refresh:
-                        await proxy_manager.get_proxies(force_refresh=True)
 
-                if downloaded:
+                    except Exception as client_err:
+                        logger.debug(
+                            "PDF download attempt %s via %s encountered exception for %s: %s",
+                            attempt + 1,
+                            mode,
+                            pdf_url,
+                            client_err
+                        )
+                        # If direct attempt fails or times out, fast-skip to avoid proxy retries on dead URLs
+                        if mode == "direct":
+                            skip_candidate = True
+                            break
+                        if mode == "proxy" and force_proxy_refresh:
+                            try:
+                                await proxy_manager.get_proxies(force_refresh=True)
+                            except Exception:
+                                pass
+
+                    if downloaded or skip_candidate:
+                        break
+
+                if downloaded or skip_candidate:
                     break
+
             if not downloaded:
-                logger.info("No usable PDF downloaded from candidate URL: %s", pdf_url)
+                logger.debug("No usable PDF downloaded from candidate URL: %s", pdf_url)
             if downloaded:
                 break
 
         if not downloaded or not dest_path or not dest_path.exists():
+            logger.info(
+                "Full-text PDF not accessible for '%s...' (source may be paywalled or require institutional login). Continuing with abstract and metadata.",
+                paper.original_title[:45] if paper.original_title else str(paper.id)
+            )
             return False
 
         # Parse downloaded PDF

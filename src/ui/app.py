@@ -67,16 +67,22 @@ with st.expander("📖 Guide: How to Read the Landscape, Matrix, and Gaps", expa
         - **RAG Chat Assistant:** Ask questions directly to an AI grounded in your indexed papers.
         """)
 
+# Processing state tracking
+if "is_processing" not in st.session_state:
+    st.session_state.is_processing = False
+is_busy = st.session_state.get("is_processing", False)
+
 # Sidebar Controls
 with st.sidebar:
     st.header("⚙️ Configuration")
     topic_query = st.text_input(
         "Research Topic / Query",
         value="Physics-Informed Neural Networks",
+        disabled=is_busy,
         help="Enter an academic topic to discover its dimensions and unexplored intersections."
     )
 
-    target_corpus = st.slider("Corpus Target Size", min_value=30, max_value=200, value=60, step=10)
+    target_corpus = st.slider("Corpus Target Size", min_value=30, max_value=200, value=60, step=10, disabled=is_busy)
 
     clustering_choice = st.selectbox(
         "Clustering Algorithm (Axis A)",
@@ -87,6 +93,7 @@ with st.sidebar:
             "HDBSCAN (Density-Based)"
         ],
         index=0,
+        disabled=is_busy,
         help="Adaptive Auto dynamically tests HDBSCAN, Ward Agglomerative, and Silhouette-Optimized KMeans, selecting the taxonomy with highest cohesion and zero unassigned noise."
     )
     algo_map = {
@@ -102,10 +109,11 @@ with st.sidebar:
         "Upload Custom Academic PDFs",
         type=["pdf"],
         accept_multiple_files=True,
+        disabled=is_busy,
         help="Upload advisor-suggested papers to merge into the compounding corpus."
     )
 
-    run_btn = st.button("🚀 Analyze Research Landscape", type="primary")
+    run_btn = st.button("🚀 Analyze Research Landscape", type="primary", disabled=is_busy)
     st.divider()
     st.markdown("""
     **Platform Capabilities:**
@@ -198,6 +206,17 @@ def execute_backend_api_pipeline(query: str, saved_paths: list, corpus_size: int
 
 # Pipeline Execution Trigger
 if run_btn and topic_query:
+    st.session_state.is_processing = True
+
+    # Prominent execution status and estimated time note
+    status_box = st.container()
+    with status_box:
+        st.info(
+            "⏳ **Executing dynamic hybrid retrieval, dual-axis unsupervised discovery, RAG indexing & synthesis...**\n\n"
+            "⏱️ **Estimated time:** ~5–8 minutes (scales with corpus size, PDF downloads, and rate limits). "
+            "Please keep this window open; results will display automatically once complete."
+        )
+
     with st.spinner("Executing dynamic hybrid retrieval, dual-axis unsupervised discovery, RAG indexing & synthesis..."):
         saved_paths = []
         if uploaded_files:
@@ -218,9 +237,13 @@ if run_btn and topic_query:
 
             st.session_state.analysis_results = results
             st.session_state.chat_history = []
-            st.success(f"Analysis complete! Mapped {results["corpus_size"]} papers across dynamic dimensions.")
+            status_box.empty()
+            st.success(f"Analysis complete! Mapped {results.get('corpus_size', 0)} papers across dynamic dimensions.")
         except Exception as e:
+            status_box.empty()
             st.error(f"Error during analysis: {e}")
+        finally:
+            st.session_state.is_processing = False
 
 # Render Results
 if st.session_state.analysis_results:
@@ -254,65 +277,161 @@ if st.session_state.analysis_results:
         "🗄️ Corpus Explorer"
     ])
 
-    # Tab 1: Top-Ranked Gap Dossiers (100% Native Streamlit Components)
+    # Tab 1: Top-Ranked Gap Dossiers (Evidence-Backed with Calibrated Confidence)
     with tab_dossiers:
-        st.subheader("🏆 Actionable Research Gap Dossiers")
+        st.subheader("🏆 Actionable Evidence-Backed Research Gap Dossiers")
         st.markdown(
-            "These proposals represent **unexplored intersections** in the scientific literature. "
-            "Both dimensions are discovered unsupervised from the papers. "
-            "Each proposal is vetted by component feasibility math and checked with a **skeptical reality check**."
+            "Every proposal is mined across **8 scientific signals** and classified into our **15-Category Gap Taxonomy**. "
+            "Gaps are subject to **Adversarial Novelty Verification** and a **5-Pillar Devil's Advocate Reality Check**."
         )
 
         ranked_gaps = res.get("ranked_gaps", [])
         if not ranked_gaps:
-            st.warning("No high-potential candidate gaps met the structural adjacency threshold. Try increasing the corpus target size.")
+            st.warning("No candidate gaps met the evidence threshold. Try increasing the corpus target size.")
 
         for rank_idx, dossier in enumerate(ranked_gaps):
-            proj_title = dossier.get("project_title") or f"{dossier["axis_a"]} in {dossier["axis_b"]}"
-            core_q = dossier.get("core_research_question") or f"How can {dossier["axis_a"]} be integrated into {dossier["axis_b"]}?"
-            why_gap = dossier.get("why_it_is_a_gap") or dossier.get("feasibility_rationale", "")
+            proj_title = dossier.get("project_title") or f"{dossier.get('axis_a')} in {dossier.get('axis_b')}"
+            gap_type = dossier.get("gap_type", "Methodological Gap")
+            gap_status = dossier.get("gap_status", "True / Strong Gap")
+            status_desc = dossier.get("status_description", "")
+            conf = dossier.get("confidence_breakdown", {})
+            core_q = dossier.get("core_research_question") or f"How can {dossier.get('axis_a')} be integrated into {dossier.get('axis_b')}?"
             exp_steps = dossier.get("suggested_first_experiment") or "Benchmark against standard open-source datasets in this domain."
-            impact_desc = dossier.get("practical_impact") or "Bridges two isolated research communities with high potential for novel publication."
+
+            # Status color tag
+            status_color = "green" if "True" in gap_status else ("orange" if "Potential" in gap_status else ("violet" if "Novel" in gap_status else "red"))
 
             with st.container(border=True):
                 # Header row with badges
-                st.caption(f":orange[**RESEARCH GAP #{rank_idx + 1}**] &nbsp; | &nbsp; 🔬 **Discovered Method:** `{dossier["axis_a"]}` &nbsp; | &nbsp; 🎯 **Discovered Domain:** `{dossier["axis_b"]}`")
+                st.caption(
+                    f":orange[**RESEARCH GAP #{rank_idx + 1}**] &nbsp; | &nbsp; "
+                    f":blue[**Category:** `{gap_type}`] &nbsp; | &nbsp; "
+                    f":{status_color}[**Status:** **{gap_status}**] &nbsp; | &nbsp; "
+                    f"📡 **Signal:** {dossier.get('signal_type', 'Literature Citation')} &nbsp; | &nbsp; "
+                    f"📑 **Evidence Ratio:** `{dossier.get('evidence_ratio', 'Verified')}`"
+                )
                 st.subheader(f"📌 {proj_title}")
+                if status_desc:
+                    st.caption(f"*{status_desc}*")
 
-                # Metrics row
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Opportunity Score", f"{dossier["composite_score"]}/5.0")
-                m2.metric("Novelty Score", f"{dossier["novelty_score"]}/5.0")
-                m3.metric("Feasibility Score", f"{dossier["feasibility_score"]}/5.0")
-                m4.metric("Impact Potential", f"{dossier["impact_score"]}/5.0")
+                # Calibrated Confidence Scorecard
+                st.markdown("##### 📊 Calibrated Gap Confidence Scorecard")
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("Overall Confidence", f"{conf.get('overall_confidence', 80)}%")
+                c2.metric("Evidence Support", f"{conf.get('evidence_confidence', 85)}%")
+                c3.metric("Novelty Verification", f"{conf.get('novelty_confidence', 85)}%")
+                c4.metric("Feasibility", f"{conf.get('feasibility_confidence', 75)}%")
+                c5.metric("Relevance", f"{conf.get('relevance_confidence', 80)}%")
+                if conf.get("derivation"):
+                    st.caption(f"ℹ️ *Confidence Basis: {conf.get('derivation')}*")
 
-                st.markdown("##### ❓ Core Research Hypothesis / Question")
-                st.info(f"*{core_q}*")
+                # Temporal trend badge
+                temp_info = dossier.get("temporal_analysis", {})
+                if temp_info:
+                    st.caption(f"⏰ **Temporal Trend:** `{temp_info.get('trend_type', 'Active Frontier')}` — {temp_info.get('explanation', '')}")
 
-                st.markdown("##### 🔍 Why This is an Unexplored Gap")
-                st.write(why_gap)
+                st.markdown("##### ❓ Core Research Question & Hypotheses")
+                st.info(f"**Question:** *{core_q}*")
+                if dossier.get("directional_hypothesis_h1"):
+                    st.markdown(f"- **Directional Hypothesis ($H_1$):** {dossier.get('directional_hypothesis_h1')}")
+                    st.markdown(f"- **Null Hypothesis ($H_0$):** {dossier.get('null_hypothesis_h0')}")
 
-                st.markdown("##### 🧪 Suggested First Experiment (Kickoff Plan)")
-                st.markdown(f"**Step-by-step action:** {exp_steps}")
+                # SOURCE FACTS vs AI INFERENCES
+                f_col1, f_col2 = st.columns(2)
+                with f_col1:
+                    st.markdown("##### 📚 Source Facts (Direct Paper Quotes)")
+                    for fact in dossier.get("source_facts", []):
+                        st.markdown(f"- {fact}")
+                with f_col2:
+                    st.markdown("##### 💡 AI Inferences (System Deduction)")
+                    for inf in dossier.get("ai_inferences", []):
+                        st.markdown(f"- {inf}")
 
-                st.error(f"🚨 **Devil's Advocate Reality Check (Potential Failure Modes):**\n\n{dossier["counter_argument"]}")
+                # Grounded Experiment Protocol
+                exp = dossier.get("grounded_experiment", {})
+                if exp:
+                    with st.expander("🧪 Grounded Experimental Protocol (Execution Plan)", expanded=True):
+                        st.markdown(f"**Target Dataset / Modality:** `{exp.get('target_dataset')}`")
+                        st.markdown(f"**Baseline Models:** {', '.join(exp.get('baselines', []))}")
+                        st.markdown(f"**Independent Variables:** {', '.join(exp.get('independent_variables', []))}")
+                        st.markdown(f"**Experimental Conditions:** {', '.join(exp.get('experimental_conditions', []))}")
+                        st.markdown(f"**Evaluation Metrics:** {', '.join(exp.get('evaluation_metrics', []))}")
+                        st.markdown(f"**Statistical Significance Test:** `{exp.get('statistical_test')}`")
+                        st.markdown(f"**Expected Scientific Contribution:** {exp.get('expected_contribution')}")
 
-                if impact_desc:
-                    st.caption(f"🌍 **Broader Impact:** {impact_desc}")
+                # 5-Pillar Devil's Advocate
+                with st.expander(f"🚨 5-Pillar Devil's Advocate Reality Check — {dossier.get('devil_advocate_verdicts', '')}", expanded=False):
+                    challenges = dossier.get("devil_advocate_challenges", {})
+                    if challenges:
+                        for ch_name, ch_data in challenges.items():
+                            v = ch_data.get("verdict", "PASS")
+                            v_badge = "🟢 PASS" if v == "PASS" else ("🟡 WARNING" if v == "WARNING" else "🔴 FAIL")
+                            st.markdown(f"**{ch_name.title()} Challenge [{v_badge}]:** *{ch_data.get('question')}*")
+                            st.caption(ch_data.get("explanation", ""))
+                    st.error(f"**Primary Technical Failure Mode:** {dossier.get('counter_argument')}")
 
-                with st.expander(f"Inspect Decision Tree & Supporting Citations for Project #{rank_idx + 1}"):
-                    st.markdown("**Transparent Decision Conditions (Why the Algorithm Picked This):**")
-                    for cond in dossier.get("grounding_conditions", []):
-                        st.markdown(f"- {cond}")
+                # Pre-Flight Researcher Verification Checklist
+                with st.expander("🧑‍🔬 Pre-Flight Researcher Verification Checklist (Before Publishing)", expanded=False):
+                    st.caption("AI is a discovery assistant. Complete this pre-flight verification before drafting a manuscript:")
+                    checklist_items = dossier.get("researcher_verification_checklist", [])
+                    for idx_c, item in enumerate(checklist_items):
+                        if isinstance(item, dict):
+                            step = item.get("step") or "Verification Step"
+                            query = item.get("query") or ""
+                            cb_label = f"**{step}**: `{query}`" if query else f"**{step}**"
+                        else:
+                            item_str = str(item).strip()
+                            if ":" in item_str:
+                                parts = item_str.split(":", 1)
+                                cb_label = f"**{parts[0].strip()}**: `{parts[1].strip()}`"
+                            else:
+                                cb_label = f"**Verification**: `{item_str}`"
+                        st.checkbox(cb_label, key=f"check_{rank_idx}_{idx_c}")
 
-                    st.markdown("**Grounded Neighbor Citations (Proof that both components work in adjacent contexts):**")
+                # Supporting Citations
+                with st.expander(f"Inspect Supporting Citations & Neighbor Evidence ({len(dossier.get('supporting_evidence', []))} citations)"):
                     evidence_list = dossier.get("supporting_evidence", [])
                     if evidence_list:
                         for ev in evidence_list:
-                            link_url = ev.get("source_url") or f"https://doi.org/{ev.get("paper_id", "")}"
-                            st.markdown(f"- **[{ev.get("title")}]({link_url})** ({ev.get("year")}) — *{ev.get("role")}*")
+                            if isinstance(ev, dict):
+                                quote_txt = f" — *\"{ev.get('quote')}\"*" if ev.get("quote") else ""
+                                st.markdown(f"- **{ev.get('title')}** ({ev.get('year')}) [{ev.get('role')}]{quote_txt}")
+                            else:
+                                st.markdown(f"- {ev}")
                     else:
-                        st.write("Neighbor evidence compiled from corpus matrix.")
+                        st.write("Supporting citations extracted from corpus matrix.")
+
+        # Bottom Expanders for Negative Examples, Limitations & Contradictions
+        st.divider()
+        with st.expander("🔍 Mined Repeated Limitations Across Corpus (Signal 1)"):
+            lim_clusters = res.get("limitation_clusters", [])
+            if lim_clusters:
+                for lc in lim_clusters[:5]:
+                    st.markdown(f"**{lc.get('canonical_name')}** — Cited in `{len(lc.get('paper_ids', []))} papers` ({', '.join(lc.get('paper_titles', [])[:2])})")
+                    for q in lc.get("evidence_quotes", [])[:2]:
+                        st.caption(f"> \"{q.get('quote')}\" — *{q.get('paper_title')}*")
+            else:
+                st.write("No repeated limitations extracted.")
+
+        with st.expander("⚡ Detected Empirical Contradictions & Trade-Offs (Signal 3)"):
+            contradictions = res.get("contradictions", [])
+            if contradictions:
+                for c in contradictions:
+                    st.markdown(f"**{c.get('contradiction_title')}**")
+                    st.markdown(f"- **Study A ({c.get('paper_a', {}).get('title')}):** {c.get('paper_a', {}).get('finding')}")
+                    st.markdown(f"- **Study B ({c.get('paper_b', {}).get('title')}):** {c.get('paper_b', {}).get('finding')}")
+                    st.info(f"**Synthesis:** {c.get('synthesis')}")
+            else:
+                st.write("No direct empirical contradictions detected in this corpus.")
+
+        with st.expander("🚫 Negative Evidence & Rejected Candidates (Why these are NOT gaps)"):
+            st.markdown("""
+            **Scientific Rigor Filter:** A system must recognize when an idea is **NOT** a gap.
+            The validator rejected or demoted candidates where:
+            - $\ge 3$ papers in the corpus already directly investigate the topic (**Prior Art Saturation**).
+            - The proposed combination is scientifically incompatible or redundant.
+            """)
+            st.info("Demonstrates explainable rejection preventing hallucinated gaps.")
 
     # Tab 2: 2D Matrix Heatmap
     with tab_matrix:
@@ -376,16 +495,35 @@ if st.session_state.analysis_results:
 
     # Tab 3: Synchronized Knowledge Graph
     with tab_graph:
-        st.subheader("🌐 Citation & Semantic Similarity Network")
-        st.markdown("""
-        **What does this graph show?**
-        - **Each Bubble (Node):** A real academic paper in the analyzed topic.
-        - **Bubble Size:** Relative citation count (larger bubbles = foundational papers).
-        - **Bubble Color:** 🔵 Retrieved online | 🟣 Uploaded by you.
-        - **Connecting Lines (Edges):** Semantic cosine similarity (>0.65) between abstracts.
-        - 🏝️ **Disconnected Islands / Empty Whitespace:** Visual proof of gaps! When two clusters have no connecting bridges, it proves that the scientific communities using those techniques are currently working in isolation.
-        """)
-        components.html(res["graph_html"], height=580, scrolling=False)
+        st.subheader("🌐 Citation & Literature Evidence Networks")
+        graph_view = st.radio(
+            "Select Knowledge Graph Representation:",
+            ["🧬 Multi-Entity Literature Evidence Graph (Papers, Methods, Problems, Datasets, Limitations, Future Work)",
+             "📄 Paper Citation & Semantic Similarity Network"],
+            horizontal=True
+        )
+
+        if "Multi-Entity" in graph_view:
+            st.markdown("""
+            **Multi-Entity Evidence Graph Legend:**
+            - 🔵 **Papers** (Blue): Published literature entries.
+            - 🟣 **Methods** (Purple): Algorithmic architectures & methodologies.
+            - 🔴 **Problems** (Rose): Core research challenges investigated.
+            - 🟢 **Datasets** (Green): Empirical benchmarks & datasets.
+            - 🟡 **Metrics** (Yellow): Evaluation criteria.
+            - 🟠 **Limitations** (Orange): Unresolved boundaries reported by authors.
+            - 🩵 **Future Work** (Cyan): Explicit open avenues proposed for next research.
+            """)
+            ev_html = res.get("evidence_graph_html") or res.get("graph_html")
+            components.html(ev_html, height=600, scrolling=False)
+        else:
+            st.markdown("""
+            **Paper Network Legend:**
+            - **Nodes:** Individual academic papers scaled by citation volume.
+            - **Edges:** Semantic abstract similarity (>0.65).
+            - **Whitespace:** Visual proof of isolated research communities.
+            """)
+            components.html(res.get("graph_html", ""), height=580, scrolling=False)
 
     # Tab 4: Research Chat Assistant (RAG)
     with tab_chat:
@@ -670,12 +808,20 @@ if st.session_state.analysis_results:
 
     # Tab 9: Ingested Corpus Explorer
     with tab_corpus:
-        st.subheader("🗄️ Ingested Corpus Explorer")
-        st.markdown("Browse all deduplicated academic papers fetched and indexed for this topic.")
-        df_corpus = pd.DataFrame(res.get("papers", []))
-        if not df_corpus.empty:
-            cols_to_show = ["title", "year", "citation_count", "source", "axis_a_tag", "axis_b_tag", "is_uploaded"]
-            existing_cols = [c for c in cols_to_show if c in df_corpus.columns]
-            st.dataframe(df_corpus[existing_cols])
+        st.subheader("🗄️ Ingested Corpus & Structured Knowledge Explorer")
+        st.markdown("Browse all deduplicated academic papers and extracted 15-dimension research attributes.")
+
+        structured = res.get("structured_records", [])
+        if structured:
+            df_struct = pd.DataFrame(structured)
+            cols = ["title", "year", "domain", "method", "dataset", "population", "evaluation_metrics", "limitations", "future_work"]
+            present_cols = [c for c in cols if c in df_struct.columns]
+            st.dataframe(df_struct[present_cols])
         else:
-            st.info("No papers currently loaded.")
+            df_corpus = pd.DataFrame(res.get("papers", []))
+            if not df_corpus.empty:
+                cols_to_show = ["title", "year", "citation_count", "source", "axis_a_tag", "axis_b_tag", "is_uploaded"]
+                existing_cols = [c for c in cols_to_show if c in df_corpus.columns]
+                st.dataframe(df_corpus[existing_cols])
+            else:
+                st.info("No papers currently loaded.")

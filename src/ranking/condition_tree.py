@@ -18,17 +18,24 @@ class ConditionTreeBuilder:
         """Generate structured condition statements based on empirical matrix metrics."""
         conditions: List[str] = []
 
-        a = gap["axis_a"]
-        b = gap["axis_b"]
-        count = gap["paper_count"]
+        a = gap.get("axis_a", "Paradigm")
+        b = gap.get("axis_b", "Domain")
+        count = gap.get("paper_count", 0)
         row_neighbors = gap.get("row_dense_neighbors", [])
         col_neighbors = gap.get("col_dense_neighbors", [])
+        signal_type = gap.get("signal_type", "Empirical Signal")
 
-        # Condition 1: Sparsity
-        conditions.append(
-            f"Condition 1 (Empirical Void): Cell ('{a}' × '{b}') contains {count} papers, "
-            f"below the corpus sparsity threshold."
-        )
+        # Condition 1: Signal & Evidence Grounding
+        if count == 0 and "Matrix" in signal_type:
+            conditions.append(
+                f"Condition 1 (Empirical Void): Cell ('{a}' × '{b}') contains {count} papers, "
+                f"below the corpus sparsity threshold."
+            )
+        else:
+            supp_count = len(gap.get("supporting_papers", []))
+            conditions.append(
+                f"Condition 1 ({signal_type}): Grounded in literature evidence with {supp_count} supporting citations (direct papers: {count})."
+            )
 
         # Condition 2: Method Ancestry
         if row_neighbors:

@@ -9,7 +9,10 @@ from src.config import settings
 
 
 def _minimal_pdf_bytes() -> bytes:
-    import fitz
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
 
     doc = fitz.open()
     page = doc.new_page()
@@ -17,6 +20,21 @@ def _minimal_pdf_bytes() -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+@pytest.mark.asyncio
+async def test_root_endpoint_redirects():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        res = await ac.get("/", follow_redirects=False)
+        assert res.status_code == 307
+        assert res.headers["location"] == "/docs"
+
+@pytest.mark.asyncio
+async def test_favicon_endpoint_returns_204():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        res = await ac.get("/favicon.ico")
+        assert res.status_code == 204
 
 @pytest.mark.asyncio
 async def test_health_endpoint():

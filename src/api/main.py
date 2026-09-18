@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -89,6 +89,16 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     proxy_pool_size: int
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root access to interactive documentation."""
+    return RedirectResponse(url="/docs", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Return 204 No Content for browser favicon requests to avoid 404 console noise."""
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():

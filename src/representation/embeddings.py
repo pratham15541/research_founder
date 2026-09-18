@@ -22,8 +22,13 @@ class EmbeddingEngine:
         """Lazy load SentenceTransformers model to conserve memory."""
         if not self._initialized:
             try:
+                import os
+                from src.config import settings
                 from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(self.model_name)
+                hf_token = settings.HF_TOKEN or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+                # Suppress Windows symlinks warning
+                os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+                self._model = SentenceTransformer(self.model_name, token=hf_token)
                 logger.info(f"Loaded SentenceTransformer: {self.model_name}")
             except Exception as e:
                 logger.warning(f"Could not load SentenceTransformer ({e}). Using content-based fallback.")
