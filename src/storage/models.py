@@ -65,7 +65,9 @@ class Paper(Base):
             "source": self.source,
             "source_url": self.source_url,
             "is_uploaded": self.is_uploaded,
-            "full_text_available": bool(self.full_text)
+            "full_text": self.full_text or "",
+            "pdf_local_path": self.pdf_local_path,
+            "full_text_available": bool(self.full_text and len(self.full_text.strip()) > 0)
         }
 
 class PaperEmbedding(Base):

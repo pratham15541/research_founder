@@ -463,30 +463,28 @@ if st.session_state.analysis_results:
 
         lit_review = res.get("literature_review", {})
         if lit_review:
-            # Executive Summary
-            st.markdown("### 📋 Executive Summary")
-            st.write(lit_review.get("executive_summary", "No summary available."))
+            if lit_review.get("review_markdown"):
+                st.markdown(lit_review["review_markdown"])
+            else:
+                st.markdown("### 📋 Executive Summary")
+                st.write(lit_review.get("executive_summary", "No summary available."))
+                st.divider()
 
-            st.divider()
+                st.markdown("### 🧩 Thematic Breakdown Across Discovered Clusters")
+                thematic_themes = lit_review.get("thematic_breakdown", [])
+                for theme in thematic_themes:
+                    with st.container(border=True):
+                        st.subheader(f"Theme: {theme.get('cluster_name', 'Theme')}")
+                        st.markdown(f"**Description & Patterns:** {theme.get('description', '')}")
+                        st.markdown(f"**Key Publications:** {', '.join(theme.get('key_papers', []))}")
+                        st.info(f"**Reported Limitations:** {theme.get('reported_limitations', 'None reported.')}")
 
-            # Thematic Breakdown
-            st.markdown("### 🧩 Thematic Breakdown Across Discovered Clusters")
-            thematic_themes = lit_review.get("thematic_breakdown", [])
-            for theme in thematic_themes:
-                with st.container(border=True):
-                    st.subheader(f"Theme: {theme.get("cluster_name")}")
-                    st.markdown(f"**Description & Patterns:** {theme.get("description")}")
-                    st.markdown(f"**Key Publications:** {", ".join(theme.get("key_papers", []))}")
-                    st.info(f"**Reported Limitations:** {theme.get("reported_limitations")}")
+                st.divider()
+                st.markdown("### 🔬 Comparative Synthesis & Open Voids")
+                st.write(lit_review.get("comparative_synthesis", ""))
+                st.warning(f"**Identified Research Voids:** {lit_review.get('identified_voids', '')}")
 
-            st.divider()
-
-            # Cross-Cutting Synthesis & Voids
-            st.markdown("### 🔬 Comparative Synthesis & Open Voids")
-            st.write(lit_review.get("comparative_synthesis", ""))
-            st.warning(f"**Identified Research Voids:** {lit_review.get("identified_voids", "")}")
-
-            with st.expander("📄 View & Copy Full Markdown Review"):
+            with st.expander("📄 View & Copy Raw Markdown Review", expanded=False):
                 st.code(lit_review.get("review_markdown", ""), language="markdown")
         else:
             st.info("Literature review synthesis is being generated or was not returned.")
@@ -501,19 +499,16 @@ if st.session_state.analysis_results:
             for idx, rq in enumerate(rq_list):
                 with st.container(border=True):
                     st.caption(f":blue[**RESEARCH QUESTION #{idx + 1}**]")
-                    st.subheader(f"❓ {rq.get("primary_research_question")}")
+                    st.subheader(f"❓ {rq.get('primary_research_question', 'N/A')}")
 
                     h_col1, h_col2 = st.columns(2)
                     with h_col1:
-                        st.success(f"**Alternative Hypothesis ($H_1$):**\n\n{rq.get("primary_hypothesis_h1")}")
+                        st.success(f"**Alternative Hypothesis ($H_1$):**\n\n{rq.get('primary_hypothesis_h1', 'N/A')}")
                     with h_col2:
-                        st.info(f"**Null Hypothesis ($H_0$):**\n\n{rq.get("null_hypothesis_h0")}")
+                        st.info(f"**Null Hypothesis ($H_0$):**\n\n{rq.get('null_hypothesis_h0', 'N/A')}")
 
                     st.markdown("##### 📊 Variables")
                     v_dict = rq.get("variables", {})
-                    st.markdown(f"- **Independent Variables:** {v_dict.get("independent", "N/A")}")
-                    st.markdown(f"- **Dependent Variables:** {v_dict.get("dependent", "N/A")}")
-                    st.markdown(f"- **Control Variables:** {v_dict.get("controlled", "N/A")}")
                     if isinstance(v_dict, dict):
                         indep = v_dict.get("independent", "N/A")
                         dep = v_dict.get("dependent", "N/A")
@@ -526,36 +521,28 @@ if st.session_state.analysis_results:
 
                     st.markdown("##### 🧪 Three-Phase Experimental Execution")
                     exp_phases = rq.get("experimental_phases", {})
-                    exp_phases = rq.get("experimental_phases", [])
                     p1, p2, p3 = st.columns(3)
-                    with p1:
-                        st.markdown(f"**Phase 1: Baselines**\n\n{exp_phases.get("phase_1_baseline_setup")}")
-                    with p2:
-                        st.markdown(f"**Phase 2: Hybridization**\n\n{exp_phases.get("phase_2_hybridization")}")
-                    with p3:
-                        st.markdown(f"**Phase 3: Validation**\n\n{exp_phases.get("phase_3_stress_testing")}")
-                    if isinstance(exp_phases, list):
-                        phase1 = exp_phases[0] if len(exp_phases) > 0 else "N/A"
-                        phase2 = exp_phases[1] if len(exp_phases) > 1 else "N/A"
-                        phase3 = exp_phases[2] if len(exp_phases) > 2 else "N/A"
-                        with p1:
-                            st.markdown(f"**Phase 1**\n\n{phase1}")
-                        with p2:
-                            st.markdown(f"**Phase 2**\n\n{phase2}")
-                        with p3:
-                            st.markdown(f"**Phase 3**\n\n{phase3}")
-                    elif isinstance(exp_phases, dict):
+                    if isinstance(exp_phases, dict):
                         with p1:
                             st.markdown(f"**Phase 1: Baselines**\n\n{exp_phases.get('phase_1_baseline_setup', 'N/A')}")
                         with p2:
                             st.markdown(f"**Phase 2: Hybridization**\n\n{exp_phases.get('phase_2_hybridization', 'N/A')}")
                         with p3:
                             st.markdown(f"**Phase 3: Validation**\n\n{exp_phases.get('phase_3_stress_testing', 'N/A')}")
+                    elif isinstance(exp_phases, list):
+                        phase1 = exp_phases[0] if len(exp_phases) > 0 else "N/A"
+                        phase2 = exp_phases[1] if len(exp_phases) > 1 else "N/A"
+                        phase3 = exp_phases[2] if len(exp_phases) > 2 else "N/A"
+                        with p1:
+                            st.markdown(f"**Phase 1: Baselines**\n\n{phase1}")
+                        with p2:
+                            st.markdown(f"**Phase 2: Hybridization**\n\n{phase2}")
+                        with p3:
+                            st.markdown(f"**Phase 3: Validation**\n\n{phase3}")
                     else:
                         st.markdown(str(exp_phases))
 
-                    st.caption(f"🌟 **Expected Scientific Contribution:** {rq.get("expected_contributions")}")
-                    st.caption(f"🌟 **Expected Scientific Contribution:** {rq.get('expected_contributions')}")
+                    st.caption(f"🌟 **Expected Scientific Contribution:** {rq.get('expected_contributions', 'N/A')}")
         else:
             st.info("No research question protocols generated yet.")
 

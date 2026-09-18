@@ -41,10 +41,31 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 async def init_db() -> None:
-    """Initialize database tables."""
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database schema initialized successfully.")
+    """Initialize database tables with dynamic SQLite fallback if PostgreSQL is unreachable."""
+    global _engine, AsyncSessionLocal, _db_url
+    try:
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info(f"Database schema initialized successfully on {_db_url}.")
+    except Exception as e:
+        if "sqlite" not in _db_url:
+            logger.warning(f"Could not connect to PostgreSQL at {_db_url} ({e}). Falling back to local SQLite.")
+            fallback_path = settings.CACHE_DIR / "compounding_research.db"
+            fallback_path.parent.mkdir(parents=True, exist_ok=True)
+            _db_url = f"sqlite+aiosqlite:///{fallback_path}"
+            _engine = create_async_engine(_db_url, echo=False)
+            AsyncSessionLocal = async_sessionmaker(
+                bind=_engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+                autocommit=False,
+                autoflush=False
+            )
+            async with _engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info(f"Database schema initialized successfully on local SQLite fallback ({fallback_path}).")
+        else:
+            raise
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency / context generator for database sessions."""

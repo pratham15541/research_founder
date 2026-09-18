@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: research_localstack
+    restart: unless-stopped
+    environment:
+      SERVICES: s3,dynamodb
+      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      - localstackdata:/var/lib/localstack
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: research_postgres
@@ -28,10 +42,51 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_secure_pass}@postgres:5432/${POSTGRES_DB:-research_db}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENALEX_EMAIL: ${OPENALEX_EMAIL:-researcher@example.edu}
       S2_API_KEY: ${S2_API_KEY:-}
+      INGESTION_SOURCES: ${INGESTION_SOURCES:-openalex,semantic_scholar,arxiv,pubmed,crossref}
+      OPENALEX_BASE_URL: ${OPENALEX_BASE_URL:-https://api.openalex.org/works}
+      SEMANTIC_SCHOLAR_BASE_URL: ${SEMANTIC_SCHOLAR_BASE_URL:-https://api.semanticscholar.org/graph/v1/paper/search}
+      ARXIV_BASE_URL: ${ARXIV_BASE_URL:-https://export.arxiv.org/api/query}
+      PUBMED_SEARCH_URL: ${PUBMED_SEARCH_URL:-https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi}
+      PUBMED_SUMMARY_URL: ${PUBMED_SUMMARY_URL:-https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi}
+      CROSSREF_BASE_URL: ${CROSSREF_BASE_URL:-https://api.crossref.org/works}
+      UNPAYWALL_BASE_URL: ${UNPAYWALL_BASE_URL:-https://api.unpaywall.org/v2}
+      OPENALEX_LIMIT: ${OPENALEX_LIMIT:-60}
+      SEMANTIC_SCHOLAR_LIMIT: ${SEMANTIC_SCHOLAR_LIMIT:-30}
+      SEMANTIC_SCHOLAR_RATE_LIMIT_COOLDOWN_SECONDS: ${SEMANTIC_SCHOLAR_RATE_LIMIT_COOLDOWN_SECONDS:-900}
+      ARXIV_LIMIT: ${ARXIV_LIMIT:-30}
+      PUBMED_LIMIT: ${PUBMED_LIMIT:-30}
+      CROSSREF_LIMIT: ${CROSSREF_LIMIT:-40}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-}
+      NVIDIA_API_KEY1: ${NVIDIA_API_KEY1:-}
+      NVIDIA_MODEL1: ${NVIDIA_MODEL1:-}
+      NVIDIA_BASE_URL1: ${NVIDIA_BASE_URL1:-}
+      NVIDIA_API_KEY2: ${NVIDIA_API_KEY2:-}
+      NVIDIA_MODEL2: ${NVIDIA_MODEL2:-}
+      NVIDIA_BASE_URL2: ${NVIDIA_BASE_URL2:-}
+      LLM_PROVIDER_MAX: ${LLM_PROVIDER_MAX:-8}
       UPLOAD_DIR: /data/uploads
+      CACHE_DIR: /data/cache
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      S3_BUCKET: ${S3_BUCKET:-research-uploads}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://localstack:4566}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PREFIX: ${S3_PREFIX:-papers}
+      STORAGE_FALLBACK_TO_LOCAL: ${STORAGE_FALLBACK_TO_LOCAL:-true}
+      DYNAMIC_LLM_ENABLED: ${DYNAMIC_LLM_ENABLED:-true}
+      LLM_REQUIRED: ${LLM_REQUIRED:-false}
+      ENABLE_FULL_TEXT_DOWNLOAD: ${ENABLE_FULL_TEXT_DOWNLOAD:-true}
+      FULL_TEXT_DOWNLOAD_LIMIT: ${FULL_TEXT_DOWNLOAD_LIMIT:-10}
+      PDF_DOWNLOAD_MAX_RETRIES: ${PDF_DOWNLOAD_MAX_RETRIES:-4}
+      PDF_DOWNLOAD_TIMEOUT_SECONDS: ${PDF_DOWNLOAD_TIMEOUT_SECONDS:-25}
+      PDF_DOWNLOAD_DIRECT_FIRST: ${PDF_DOWNLOAD_DIRECT_FIRST:-true}
+      PROXY_SOURCE_URLS: ${PROXY_SOURCE_URLS:-https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt,https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/https.txt}
+      PROXY_CACHE_TTL_SECONDS: ${PROXY_CACHE_TTL_SECONDS:-1800}
+      PROXY_REFRESH_ON_FAILURES: ${PROXY_REFRESH_ON_FAILURES:-2}
+      PROXY_USE_DIRECT_FALLBACK: ${PROXY_USE_DIRECT_FALLBACK:-true}
     volumes:
       - ../data/uploads:/data/uploads
       - ../data/cache:/data/cache
@@ -40,6 +95,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      localstack:
+        condition: service_started
 
   frontend:
     build:
@@ -56,4 +113,4 @@ services:
 
 volumes:
   pgdata:
-
+  localstackdata:

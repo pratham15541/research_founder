@@ -1,7 +1,7 @@
 """
 Master Research Discovery Workflow.
 Coordinates the end-to-end pipeline from query expansion and hybrid retrieval to
-unsupervised dimension discovery, deterministic 2D matrix aggregation,
+unsupervised dimension discovery, corpus-derived 2D matrix aggregation,
 and grounded ranking with devil's advocate critique.
 """
 
@@ -46,12 +46,11 @@ class ResearchWorkflowRunner:
         topic_query: str,
         expanded_queries: Optional[List[str]] = None,
         uploaded_pdf_paths: Optional[List[Path]] = None,
-        axis_b_predefined: Optional[List[str]] = None,
         target_corpus_size: int = 120,
         clustering_algorithm: str = "auto"
     ) -> Dict[str, Any]:
         """Execute the full 10-step research discovery pipeline."""
-        queries = expanded_queries or [topic_query, f"{topic_query} methods", f"{topic_query} applications"]
+        queries = expanded_queries or self._expand_queries(topic_query)
 
         # Step 1 & 2: Hybrid Ingestion & Compounding DB Cache
         corpus_papers = await self.ingestion.ingest_topic_corpus(
@@ -91,35 +90,22 @@ class ResearchWorkflowRunner:
             p["axis_a_tag"] = cluster_info[cid]["label"]
             p["tag_confidence"] = "high" if cid != -1 else "medium"
 
-        # Define Axis B (Domain / Application or Predefined buckets)
-        # Step 5b: Dynamic Unsupervised Discovery of Axis B (Application Domains & Problem Settings)
-        if not axis_b_predefined:
-            axis_b_labels = [
-                "Healthcare & Clinical",
-                "Autonomous Robotics",
-                "Low-Power Edge Systems",
-                "Finance & Economics",
-                "Scientific Discovery"
-            ]
-            axis_b_labels = DomainDiscoveryEngine.discover_domains(
-                topic_query=topic_query,
-                papers=paper_dicts,
-                embedder=self.embedder,
-                num_domains=5
-            )
-        else:
-            axis_b_labels = axis_b_predefined
+        # Define Axis B dynamically from the retrieved papers only.
+        axis_b_labels = DomainDiscoveryEngine.discover_domains(
+            topic_query=topic_query,
+            papers=paper_dicts,
+            embedder=self.embedder,
+            num_domains=5
+        )
 
-        # Tag Axis B (Rule-based / Keyword classification for demonstration)
-        self._tag_axis_b(paper_dicts, axis_b_labels)
-        # Tag Axis B dynamically using embedding cosine similarity
+        # Tag Axis B dynamically using embedding cosine similarity and confidence margins.
         DomainDiscoveryEngine.tag_papers_with_domains(
             papers=paper_dicts,
             domains=axis_b_labels,
             embedder=self.embedder
         )
 
-        # Step 6: Deterministic 2D Matrix Aggregation
+        # Step 6: Corpus-derived 2D matrix aggregation
         matrix_result = CombinatorialMatrixAggregator.aggregate_matrix(
             papers=paper_dicts,
             axis_a_labels=axis_a_labels,
@@ -173,6 +159,8 @@ class ResearchWorkflowRunner:
         topic_diversity = EvaluationMetricsEngine.calculate_topic_diversity(topic_terms_list)
         topic_coherence = EvaluationMetricsEngine.calculate_topic_coherence(topic_terms_list, self.embedder)
         retrieval_eval = EvaluationMetricsEngine.calculate_retrieval_metrics(topic_query, paper_dicts)
+        full_text_papers = [p for p in paper_dicts if p.get("full_text_available")]
+        downloaded_pdf_papers = [p for p in paper_dicts if p.get("pdf_local_path")]
 
         # Step 13: Literature Review Synthesis
         lit_review = LiteratureReviewGenerator.generate_review(
@@ -191,6 +179,7 @@ class ResearchWorkflowRunner:
 
         return {
             "topic_query": topic_query,
+            "expanded_queries": queries,
             "corpus_size": int(len(paper_dicts)),
             "silhouette_score": float(round(sil_score, 3)),
             "cluster_method": cluster_method,
@@ -205,6 +194,12 @@ class ResearchWorkflowRunner:
             "graph_html": graph_html,
             "papers": paper_dicts,
             "chunks_count": len(chunks),
+            "pdf_enrichment": {
+                "full_text_available_count": len(full_text_papers),
+                "pdf_stored_count": len(downloaded_pdf_papers),
+                "download_enabled": settings.ENABLE_FULL_TEXT_DOWNLOAD,
+                "download_limit": settings.FULL_TEXT_DOWNLOAD_LIMIT
+            },
             "evaluation_metrics": {
                 "silhouette_score": float(round(sil_score, 3)),
                 "topic_coherence": topic_coherence,
@@ -216,28 +211,32 @@ class ResearchWorkflowRunner:
         }
 
     @staticmethod
-    def _tag_axis_b(papers: List[Dict[str, Any]], axis_b_labels: List[str]) -> None:
-        """Categorize papers along Axis B using keyword heuristics or round-robin for balanced spread."""
-        domain_keywords = {
-            "Healthcare & Clinical": ["medical", "health", "clinical", "patient", "disease", "hospital", "cancer", "biomedical"],
-            "Autonomous Robotics": ["robot", "autonomous", "vehicle", "navigation", "motion", "drone", "sensor", "slam"],
-            "Low-Power Edge Systems": ["edge", "embedded", "low-power", "mobile", "fpga", "quantization", "latency", "hardware"],
-            "Finance & Economics": ["market", "trading", "financial", "stock", "portfolio", "risk", "crypto", "price"],
-            "Scientific Discovery": ["physics", "chemistry", "material", "climate", "molecule", "biology", "simulation", "earth"]
-        }
+    def _expand_queries(topic_query: str) -> List[str]:
+        """Expand user topic into diverse academic retrieval queries."""
+        if settings.DYNAMIC_LLM_ENABLED and settings.NVIDIA_API_KEY:
+            prompt = f"""You are designing a literature search for a research-gap discovery agent.
+Given the topic: "{topic_query}"
 
-        for idx, p in enumerate(papers):
-            text = f"{p.get('title', '')} {p.get('abstract', '')}".lower()
-            matched_b = None
-            for b_label in axis_b_labels:
-                kws = domain_keywords.get(b_label, [])
-                if any(kw in text for kw in kws):
-                    matched_b = b_label
-                    break
+Return a JSON list of 5 concise search queries that cover methods, applications, benchmarks, limitations, and emerging directions.
+Each query must be 3 to 9 words and must remain tightly relevant to the topic."""
+            try:
+                from src.llm.nvidia_client import NvidiaClient
+                parsed = NvidiaClient.generate_json(
+                    prompt=prompt,
+                    temperature=settings.LLM_STRUCTURED_TEMPERATURE,
+                    max_tokens=768
+                )
+                if isinstance(parsed, list):
+                    cleaned = []
+                    for item in parsed:
+                        q = str(item).strip()
+                        if q and q.lower() not in {x.lower() for x in cleaned}:
+                            cleaned.append(q)
+                    if cleaned:
+                        return [topic_query] + cleaned[:5]
+            except Exception as exc:
+                logger.warning("LLM query expansion failed: %s", exc)
+        elif settings.LLM_REQUIRED:
+            raise RuntimeError("NVIDIA_API_KEY is required for query expansion because LLM_REQUIRED=true.")
 
-            # If no keyword match, assign deterministically based on index hash for spread
-            if not matched_b:
-                matched_b = axis_b_labels[idx % len(axis_b_labels)]
-
-            p["axis_b_tag"] = matched_b
-
+        return [topic_query]

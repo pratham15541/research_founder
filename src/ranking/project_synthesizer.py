@@ -29,10 +29,12 @@ class ResearchProjectSynthesizer:
         Generate a human-readable project briefing for a detected research gap.
         Uses NVIDIA AI if configured; falls back to structured domain heuristics.
         """
-        if settings.NVIDIA_API_KEY:
+        if settings.DYNAMIC_LLM_ENABLED and settings.NVIDIA_API_KEY:
             llm_result = cls._synthesize_with_llm(axis_a, axis_b, neighbor_papers_a, neighbor_papers_b, cell_count)
             if llm_result:
                 return llm_result
+        elif settings.LLM_REQUIRED:
+            raise RuntimeError("NVIDIA_API_KEY is required because LLM_REQUIRED=true.")
 
         return cls._synthesize_with_heuristics(axis_a, axis_b, neighbor_papers_a, neighbor_papers_b, cell_count)
 
@@ -74,7 +76,7 @@ Respond ONLY with a valid JSON object matching this schema:
 """
         try:
             from src.llm.nvidia_client import NvidiaClient
-            data = NvidiaClient.generate_json(prompt=prompt, temperature=0.25, max_tokens=1024)
+            data = NvidiaClient.generate_json(prompt=prompt, temperature=settings.LLM_STRUCTURED_TEMPERATURE, max_tokens=1024)
             if data and isinstance(data, dict):
                 required_keys = ["project_title", "core_research_question", "why_it_is_a_gap", "suggested_first_experiment"]
                 if all(k in data for k in required_keys):
@@ -93,12 +95,13 @@ Respond ONLY with a valid JSON object matching this schema:
         papers_b: List[Dict[str, Any]],
         cell_count: int
     ) -> Dict[str, str]:
-        """Deterministic heuristic fallback that formats crisp, human-readable research proposals."""
+        """Corpus-derived fallback that formats a readable proposal from neighboring evidence."""
         b_clean = axis_b.replace("&", "and").strip()
         a_clean = axis_a.replace("&", "and").strip()
+        evidence_titles = [p.get("title", "") for p in (papers_a + papers_b) if p.get("title")]
+        evidence_phrase = "; ".join(evidence_titles[:3]) if evidence_titles else "adjacent retrieved papers"
 
-        # Generate a clean paper title
-        project_title = f"{a_clean} for Accelerated Problem-Solving in {b_clean}"
+        project_title = f"{a_clean} for {b_clean}: A Corpus-Grounded Transfer Study"
 
         # Core research question
         core_research_question = (
@@ -112,7 +115,7 @@ Respond ONLY with a valid JSON object matching this schema:
         why_it_is_a_gap = (
             f"While '{a_clean}' is actively demonstrated across adjacent subfields ({n_a}+ active papers) "
             f"and '{b_clean}' possesses rich empirical benchmarks ({n_b}+ papers), only {cell_count} studies currently bridge the two. "
-            f"This disconnect indicates an unexplored scientific intersection ripe for first-mover advantage."
+            f"The nearest evidence comes from: {evidence_phrase}."
         )
 
         # Suggested first experiment
@@ -123,7 +126,7 @@ Respond ONLY with a valid JSON object matching this schema:
         )
 
         practical_impact = (
-            f"Unlocks a novel computational paradigm for {b_clean} without requiring prohibitive labeled data collection."
+            f"If validated, this would clarify whether evidence around {evidence_phrase} transfers into {b_clean}."
         )
 
         return {
@@ -133,4 +136,3 @@ Respond ONLY with a valid JSON object matching this schema:
             "suggested_first_experiment": suggested_first_experiment,
             "practical_impact": practical_impact
         }
-

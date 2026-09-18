@@ -10,11 +10,14 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.ingestion.openalex import OpenAlexRetriever
 from src.ingestion.semantic_scholar import SemanticScholarRetriever
 from src.ingestion.arxiv_client import ArxivRetriever
 from src.ingestion.pubmed_client import PubMedRetriever
+from src.ingestion.crossref_client import CrossrefRetriever
 from src.ingestion.pdf_parser import AcademicPDFParser
+from src.ingestion.full_paper_downloader import FullPaperDownloader
 from src.storage.cache import CompoundingCacheEngine
 from src.storage.models import Paper
 
@@ -28,6 +31,7 @@ class HybridIngestionEngine:
         self.s2 = SemanticScholarRetriever()
         self.arxiv = ArxivRetriever()
         self.pubmed = PubMedRetriever()
+        self.crossref = CrossrefRetriever()
 
     def _is_biomedical_query(self, query: str) -> bool:
         """Heuristic check to determine if PubMed routing is appropriate."""
@@ -64,14 +68,24 @@ class HybridIngestionEngine:
                 except Exception as e:
                     logger.warning(f"Failed to parse PDF {pdf_path.name}: {e}")
 
-        # 2. Fetch external APIs concurrently
+        # 2. Fetch configured external APIs concurrently
+        enabled_sources = {
+            s.strip().lower()
+            for s in settings.INGESTION_SOURCES.split(",")
+            if s.strip()
+        }
         tasks = []
         for q in queries:
-            tasks.append(self.openalex.search(q, limit=60))
-            tasks.append(self.s2.search(q, limit=30))
-            tasks.append(self.arxiv.search(q, limit=30))
-            if self._is_biomedical_query(q):
-                tasks.append(self.pubmed.search(q, limit=30))
+            if "openalex" in enabled_sources:
+                tasks.append(self.openalex.search(q, limit=settings.OPENALEX_LIMIT))
+            if "semantic_scholar" in enabled_sources or "s2" in enabled_sources:
+                tasks.append(self.s2.search(q, limit=settings.SEMANTIC_SCHOLAR_LIMIT))
+            if "arxiv" in enabled_sources:
+                tasks.append(self.arxiv.search(q, limit=settings.ARXIV_LIMIT))
+            if "pubmed" in enabled_sources:
+                tasks.append(self.pubmed.search(q, limit=settings.PUBMED_LIMIT))
+            if "crossref" in enabled_sources:
+                tasks.append(self.crossref.search(q, limit=settings.CROSSREF_LIMIT))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for res in results:
@@ -95,10 +109,26 @@ class HybridIngestionEngine:
 
         # Prioritize papers with abstracts and higher citation count
         final_corpus.sort(key=lambda p: (p.is_uploaded, p.citation_count), reverse=True)
+        final_corpus = final_corpus[:target_corpus_size]
+
+        if settings.ENABLE_FULL_TEXT_DOWNLOAD:
+            enriched = 0
+            checked = 0
+            for paper in final_corpus:
+                if checked >= settings.FULL_TEXT_DOWNLOAD_LIMIT:
+                    break
+                if paper.full_text and len(paper.full_text.strip()) >= settings.MIN_EXTRACTED_PDF_TEXT_CHARS:
+                    continue
+                checked += 1
+                try:
+                    if await FullPaperDownloader.download_and_parse_full_paper(session, paper):
+                        enriched += 1
+                except Exception as exc:
+                    logger.info("Full-text enrichment skipped for %s: %s", paper.id, exc)
+            logger.info("Full-text enrichment checked=%s enriched=%s", checked, enriched)
 
         logger.info(
             f"Hybrid Ingestion complete: Total corpus size = {len(final_corpus)} "
             f"({len(cached_existing)} cached + {len(inserted_papers)} newly fetched)"
         )
-        return final_corpus[:target_corpus_size]
-
+        return final_corpus

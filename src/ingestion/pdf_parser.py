@@ -25,6 +25,14 @@ class AcademicPDFParser:
     """Parses academic PDFs with column sorting, layout preservation, and section mining."""
 
     @staticmethod
+    def validate_pdf_bytes(content: bytes) -> bool:
+        """Fast PDF byte validation that tolerates small binary prefixes before the header."""
+        if len(content) < 10 or len(content) > 25 * 1024 * 1024:
+            return False
+        header_window = content[:1024]
+        return b"%PDF-" in header_window
+
+    @staticmethod
     def validate_pdf_file(file_path: Path) -> bool:
         """Verify that the file exists, is non-empty, and has %PDF- magic bytes."""
         if not file_path.exists() or file_path.is_dir():
@@ -36,10 +44,87 @@ class AcademicPDFParser:
 
         try:
             with open(file_path, "rb") as f:
-                header = f.read(5)
-                return header == b"%PDF-"
+                return AcademicPDFParser.validate_pdf_bytes(f.read())
         except Exception:
             return False
+
+    @staticmethod
+    def inspect_pdf_file(file_path: Path, min_text_chars: int = 0) -> Dict[str, Any]:
+        """
+        Return a detailed validation report for false-positive/false-negative control.
+        `is_valid` means the file looks like a parseable PDF with at least one page.
+        """
+        report: Dict[str, Any] = {
+            "is_valid": False,
+            "reason": "",
+            "size_bytes": 0,
+            "has_pdf_header": False,
+            "has_eof_marker": False,
+            "page_count": 0,
+            "pages_with_text": 0,
+            "text_chars": 0,
+            "text_extraction_ok": False
+        }
+
+        if not file_path.exists() or file_path.is_dir():
+            report["reason"] = "missing_file"
+            return report
+
+        size = file_path.stat().st_size
+        report["size_bytes"] = size
+        if size < 10:
+            report["reason"] = "too_small"
+            return report
+        if size > 25 * 1024 * 1024:
+            report["reason"] = "too_large"
+            return report
+
+        try:
+            content = file_path.read_bytes()
+        except Exception as exc:
+            report["reason"] = f"read_error:{exc}"
+            return report
+
+        report["has_pdf_header"] = AcademicPDFParser.validate_pdf_bytes(content)
+        report["has_eof_marker"] = b"%%EOF" in content[-4096:]
+        if not report["has_pdf_header"]:
+            report["reason"] = "missing_pdf_header"
+            return report
+
+        try:
+            import fitz
+        except ImportError:
+            report["is_valid"] = True
+            report["reason"] = "valid_header_parser_unavailable"
+            return report
+
+        try:
+            doc = fitz.open(file_path)
+            try:
+                report["page_count"] = len(doc)
+                text_chars = 0
+                pages_with_text = 0
+                for page in doc:
+                    text = page.get_text("text").strip()
+                    if text:
+                        pages_with_text += 1
+                        text_chars += len(text)
+                report["pages_with_text"] = pages_with_text
+                report["text_chars"] = text_chars
+                report["text_extraction_ok"] = text_chars >= min_text_chars if min_text_chars else text_chars > 0
+                report["is_valid"] = len(doc) > 0
+                if not report["is_valid"]:
+                    report["reason"] = "zero_pages"
+                elif min_text_chars and text_chars < min_text_chars:
+                    report["reason"] = "low_text_extractable_pdf"
+                else:
+                    report["reason"] = "ok"
+            finally:
+                doc.close()
+        except Exception as exc:
+            report["reason"] = f"parser_error:{exc}"
+
+        return report
 
     @classmethod
     def parse_pdf(cls, file_path: Path) -> Dict[str, Any]:
@@ -47,8 +132,9 @@ class AcademicPDFParser:
         Extract text, sections, and basic metadata from an academic PDF.
         Supports double-column layout sorting.
         """
-        if not cls.validate_pdf_file(file_path):
-            raise ValueError(f"Invalid or untrusted PDF file: {file_path.name}")
+        validation = cls.inspect_pdf_file(file_path)
+        if not validation["is_valid"]:
+            raise ValueError(f"Invalid or untrusted PDF file: {file_path.name} ({validation['reason']})")
 
         try:
             import fitz  # PyMuPDF
@@ -59,8 +145,11 @@ class AcademicPDFParser:
         doc = fitz.open(file_path)
         full_text_blocks: List[str] = []
         page_texts: List[str] = []
+        page_count = 0
+        pages_with_text = 0
 
         try:
+            page_count = len(doc)
             for page_idx in range(len(doc)):
                 page = doc[page_idx]
                 # Extract blocks with coordinates: (x0, y0, x1, y1, text, block_no, block_type)
@@ -86,6 +175,8 @@ class AcademicPDFParser:
                         page_content.append(text)
                 
                 page_str = "\n\n".join(page_content)
+                if page_str.strip():
+                    pages_with_text += 1
                 page_texts.append(page_str)
                 full_text_blocks.extend(page_content)
         finally:
@@ -117,7 +208,11 @@ class AcademicPDFParser:
             "full_text": full_text[:50000],  # Bound text length for memory safety
             "is_uploaded": True,
             "source": "uploaded_pdf",
-            "pdf_local_path": str(file_path)
+            "pdf_local_path": str(file_path),
+            "pdf_validation": validation,
+            "pdf_page_count": page_count,
+            "pdf_pages_with_text": pages_with_text,
+            "pdf_text_chars": len(full_text)
         }
 
     @classmethod
@@ -188,4 +283,3 @@ class AcademicPDFParser:
                     seeds.append(sent_clean)
 
         return seeds[:5]  # Top 5 future work statements
-

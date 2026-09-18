@@ -24,10 +24,9 @@ def reconstruct_abstract(inverted_index: Optional[Dict[str, List[int]]]) -> str:
 class OpenAlexRetriever(BaseRetriever):
     """Retrieves academic papers from OpenAlex with polite pool acceleration."""
 
-    BASE_URL = "https://api.openalex.org/works"
-
     def __init__(self, email: Optional[str] = None):
         self.email = email or settings.OPENALEX_EMAIL
+        self.base_url = settings.OPENALEX_BASE_URL
         self.headers = {
             "User-Agent": f"ResearchGraph-Matrix/1.0 (mailto:{self.email})"
         }
@@ -44,7 +43,7 @@ class OpenAlexRetriever(BaseRetriever):
         papers: List[Dict[str, Any]] = []
         try:
             async with httpx.AsyncClient(timeout=15.0, headers=self.headers) as client:
-                response = await client.get(self.BASE_URL, params=params)
+                response = await client.get(self.base_url, params=params)
                 if response.status_code != 200:
                     logger.warning(f"OpenAlex returned status code {response.status_code}: {response.text[:200]}")
                     return []
@@ -73,7 +72,9 @@ class OpenAlexRetriever(BaseRetriever):
                     if doi and doi.startswith("https://doi.org/"):
                         doi = doi.replace("https://doi.org/", "")
 
-                    landing_url = item.get("primary_location", {}).get("landing_page_url") or item.get("id", "")
+                    primary_location = item.get("primary_location") or {}
+                    landing_url = primary_location.get("landing_page_url") or item.get("id", "")
+                    pdf_url = primary_location.get("pdf_url")
 
                     papers.append({
                         "doi": doi,
@@ -83,7 +84,7 @@ class OpenAlexRetriever(BaseRetriever):
                         "year": item.get("publication_year") or 2024,
                         "citation_count": item.get("cited_by_count", 0),
                         "source": "openalex",
-                        "source_url": landing_url,
+                        "source_url": pdf_url or landing_url,
                         "is_uploaded": False
                     })
         except Exception as e:
@@ -91,4 +92,3 @@ class OpenAlexRetriever(BaseRetriever):
 
         logger.info(f"OpenAlex retrieved {len(papers)} valid papers for query: '{query}'")
         return papers
-

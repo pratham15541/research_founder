@@ -4,18 +4,17 @@ Downloads open-access full-text PDFs from official sources (arXiv, OpenAlex OA, 
 using rotating free proxies from iplocate/free-proxy-list to eliminate rate limits and IP restrictions.
 """
 
-import os
 import re
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 import httpx
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.ingestion.proxy_manager import proxy_manager
 from src.ingestion.pdf_parser import AcademicPDFParser
+from src.storage.file_storage import get_file_storage_backend
 from src.storage.models import Paper, PaperSection
 
 logger = logging.getLogger(__name__)
@@ -26,33 +25,55 @@ class FullPaperDownloader:
     @staticmethod
     def resolve_official_pdf_url(paper: Dict[str, Any]) -> Optional[str]:
         """Resolve the official direct PDF download link from paper metadata."""
-        source = paper.get("source", "")
-        url = paper.get("source_url", "")
-        doi = paper.get("doi", "")
+        candidates = FullPaperDownloader.resolve_official_pdf_candidates(paper)
+        return candidates[0] if candidates else None
 
-        # 1. arXiv: https://arxiv.org/abs/2301.12345 -> https://arxiv.org/pdf/2301.12345.pdf
+    @staticmethod
+    def resolve_official_pdf_candidates(paper: Dict[str, Any]) -> List[str]:
+        """Resolve ranked direct PDF candidates from paper metadata."""
+        url = paper.get("source_url", "")
+        candidates: List[str] = []
+
+        def add_candidate(value: Optional[str]) -> None:
+            if not value:
+                return
+            candidate = str(value).strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        # Explicit open-access PDF URLs from APIs should be tried first when present.
+        add_candidate(paper.get("pdf_url"))
+
+        # arXiv: https://arxiv.org/abs/2301.12345 -> https://arxiv.org/pdf/2301.12345.pdf
         if "arxiv.org" in url:
             arxiv_id_match = re.search(r"arxiv\.org/(abs|pdf)/([0-9]+\.[0-9]+|[a-z\-]+/[0-9]+)", url)
             if arxiv_id_match:
                 arxiv_id = arxiv_id_match.group(2)
-                return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+                add_candidate(f"https://arxiv.org/pdf/{arxiv_id}.pdf")
 
-        # 2. Semantic Scholar or OpenAlex explicit PDF url
-        if paper.get("pdf_url"):
-            return paper["pdf_url"]
+        # Direct PDF links, including publisher links with query strings.
+        if url and url.lower().split("?", 1)[0].endswith(".pdf"):
+            add_candidate(url)
 
-        # 3. Direct PDF link in source_url
-        if url and url.endswith(".pdf"):
-            return url
+        return candidates
 
-        return None
+    @classmethod
+    async def _resolve_pdf_candidates(cls, paper: Dict[str, Any]) -> List[str]:
+        """Resolve all known legal PDF candidates, including DOI-based OA fallbacks."""
+        candidates = cls.resolve_official_pdf_candidates(paper)
+        doi = paper.get("doi")
+        if doi:
+            unpaywall_url = await cls._resolve_via_unpaywall(str(doi))
+            if unpaywall_url and unpaywall_url not in candidates:
+                candidates.append(unpaywall_url)
+        return candidates
 
     @classmethod
     async def download_and_parse_full_paper(
         cls,
         session: AsyncSession,
         paper: Paper,
-        max_retries: int = 3
+        max_retries: Optional[int] = None
     ) -> bool:
         """
         Download official open-access PDF for a paper using rotating proxies,
@@ -62,45 +83,109 @@ class FullPaperDownloader:
             return True  # Already has full text
 
         paper_dict = paper.to_dict()
-        pdf_url = cls.resolve_official_pdf_url(paper_dict)
-
-        # If no direct URL, query Unpaywall (official open-access resolver)
-        if not pdf_url and paper.doi:
-            pdf_url = await cls._resolve_via_unpaywall(paper.doi)
-
-        if not pdf_url:
+        pdf_urls = await cls._resolve_pdf_candidates(paper_dict)
+        if not pdf_urls:
             return False
 
-        logger.info(f"Downloading full-text PDF for '{paper.original_title[:40]}...' from {pdf_url}")
-        dest_path = settings.UPLOAD_DIR / f"{paper.id}.pdf"
+        logger.info(
+            "Downloading full-text PDF for '%s...' using %s candidate URL(s)",
+            paper.original_title[:40],
+            len(pdf_urls)
+        )
+        dest_path: Optional[Path] = None
+        storage_uri: Optional[str] = None
 
-        # Download with proxy rotation
+        max_retries = max_retries or settings.PDF_DOWNLOAD_MAX_RETRIES
+        headers = {
+            "User-Agent": f"ResearchGraph-Matrix/1.0 (mailto:{settings.OPENALEX_EMAIL})",
+            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.2"
+        }
+
+        # Download with proxy rotation and direct fallback. Some publishers reject
+        # free proxies even when the URL is a valid PDF.
         downloaded = False
-        for attempt in range(max_retries):
-            try:
-                # Use proxy on retry or primary
-                client = await proxy_manager.get_working_client(timeout=20.0)
-                async with client:
-                    resp = await client.get(pdf_url, follow_redirects=True)
-                    if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
-                        settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-                        with open(dest_path, "wb") as f:
-                            f.write(resp.content)
-                        downloaded = True
-                        break
-                    elif resp.status_code == 200 and len(resp.content) > 1000:
-                        # Some servers send PDF without standard header at offset 0
-                        with open(dest_path, "wb") as f:
-                            f.write(resp.content)
-                        if AcademicPDFParser.validate_pdf_file(dest_path):
-                            downloaded = True
-                            break
-                        else:
-                            dest_path.unlink(missing_ok=True)
-            except Exception as e:
-                logger.warning(f"Download attempt {attempt+1} failed for {pdf_url}: {e}")
+        for pdf_url in pdf_urls:
+            for attempt in range(max_retries):
+                force_proxy_refresh = attempt > 0 and attempt % max(1, settings.PROXY_REFRESH_ON_FAILURES) == 0
+                try:
+                    clients = []
+                    proxy_client = await proxy_manager.get_working_client(
+                        timeout=settings.PDF_DOWNLOAD_TIMEOUT_SECONDS,
+                        force_refresh=force_proxy_refresh,
+                        headers=headers
+                    )
 
-        if not downloaded or not dest_path.exists():
+                    def direct_client() -> httpx.AsyncClient:
+                        return httpx.AsyncClient(
+                            timeout=settings.PDF_DOWNLOAD_TIMEOUT_SECONDS,
+                            headers=headers
+                        )
+
+                    if settings.PDF_DOWNLOAD_DIRECT_FIRST:
+                        if settings.PROXY_USE_DIRECT_FALLBACK:
+                            clients.append(("direct", direct_client()))
+                        clients.append(("proxy", proxy_client))
+                    else:
+                        clients.append(("proxy", proxy_client))
+                        if settings.PROXY_USE_DIRECT_FALLBACK:
+                            clients.append(("direct", direct_client()))
+
+                    for mode, client in clients:
+                        async with client:
+                            resp = await client.get(pdf_url, follow_redirects=True)
+                            content_type = resp.headers.get("content-type", "").lower()
+                            if resp.status_code != 200 or len(resp.content) < 1000:
+                                logger.info(
+                                    "PDF download attempt %s via %s returned status=%s bytes=%s for %s",
+                                    attempt + 1,
+                                    mode,
+                                    resp.status_code,
+                                    len(resp.content),
+                                    pdf_url
+                                )
+                                continue
+                            if "html" in content_type and not AcademicPDFParser.validate_pdf_bytes(resp.content):
+                                logger.info(
+                                    "PDF download attempt %s via %s returned HTML for %s",
+                                    attempt + 1,
+                                    mode,
+                                    pdf_url
+                                )
+                                continue
+
+                            if AcademicPDFParser.validate_pdf_bytes(resp.content):
+                                stored = get_file_storage_backend().save_bytes(
+                                    content=resp.content,
+                                    filename=f"{paper.id}.pdf",
+                                    content_type="application/pdf",
+                                    file_id=str(paper.id)
+                                )
+                                validation = AcademicPDFParser.inspect_pdf_file(
+                                    stored.local_path,
+                                    min_text_chars=settings.MIN_EXTRACTED_PDF_TEXT_CHARS
+                                )
+                                if validation["is_valid"]:
+                                    dest_path = stored.local_path
+                                    storage_uri = stored.uri
+                                    downloaded = True
+                                    break
+                                logger.info("Downloaded bytes were PDF-like but invalid after inspection: %s", validation)
+                                stored.local_path.unlink(missing_ok=True)
+                        if downloaded:
+                            break
+                except Exception as e:
+                    logger.warning(f"Download attempt {attempt+1} failed for {pdf_url}: {e}")
+                    if force_proxy_refresh:
+                        await proxy_manager.get_proxies(force_refresh=True)
+
+                if downloaded:
+                    break
+            if not downloaded:
+                logger.info("No usable PDF downloaded from candidate URL: %s", pdf_url)
+            if downloaded:
+                break
+
+        if not downloaded or not dest_path or not dest_path.exists():
             return False
 
         # Parse downloaded PDF
@@ -108,10 +193,17 @@ class FullPaperDownloader:
             parsed = AcademicPDFParser.parse_pdf(dest_path)
             full_text = parsed.get("full_text", "")
             sections = parsed.get("sections", {})
+            if len(full_text.strip()) < settings.MIN_EXTRACTED_PDF_TEXT_CHARS:
+                logger.info(
+                    "Downloaded PDF for %s but extracted only %s chars; treating as not full-text usable.",
+                    paper.id,
+                    len(full_text.strip())
+                )
+                return False
 
             # Update Paper in database
             paper.full_text = full_text
-            paper.pdf_local_path = str(dest_path)
+            paper.pdf_local_path = storage_uri or str(dest_path)
 
             # Insert extracted sections
             for sec_type, content in sections.items():
@@ -134,7 +226,7 @@ class FullPaperDownloader:
     async def _resolve_via_unpaywall(doi: str) -> Optional[str]:
         """Query official Unpaywall API for legal open-access PDF URL."""
         email = settings.OPENALEX_EMAIL
-        api_url = f"https://api.unpaywall.org/v2/{doi}?email={email}"
+        api_url = f"{settings.UNPAYWALL_BASE_URL.rstrip('/')}/{doi}?email={email}"
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 res = await client.get(api_url)
@@ -145,4 +237,3 @@ class FullPaperDownloader:
         except Exception:
             pass
         return None
-

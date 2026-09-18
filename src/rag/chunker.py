@@ -30,6 +30,9 @@ class AcademicChunker:
         sections = paper.get("sections", {})
         if not sections and paper.get("abstract"):
             sections = {"abstract": paper.get("abstract", "")}
+        if paper.get("full_text") and len(paper.get("full_text", "").strip()) > 100:
+            sections = dict(sections)
+            sections.setdefault("full_text", paper.get("full_text", ""))
 
         for sec_type, content in sections.items():
             if not content or len(content.strip()) < 30:
@@ -81,4 +84,3 @@ class AcademicChunker:
         for p in papers:
             all_chunks.extend(cls.chunk_paper(p, max_chunk_words, overlap_words))
         return all_chunks
-

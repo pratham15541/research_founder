@@ -6,14 +6,16 @@ import logging
 from typing import List, Dict, Any
 import httpx
 from src.ingestion.base import BaseRetriever
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
 class PubMedRetriever(BaseRetriever):
     """Retrieves biomedical literature from NCBI Entrez E-Utilities."""
 
-    SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    SUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+    def __init__(self):
+        self.search_url = settings.PUBMED_SEARCH_URL
+        self.summary_url = settings.PUBMED_SUMMARY_URL
 
     async def search(self, query: str, limit: int = 40) -> List[Dict[str, Any]]:
         """Search PubMed database and retrieve document summaries."""
@@ -28,7 +30,7 @@ class PubMedRetriever(BaseRetriever):
                     "retmax": min(limit, 50),
                     "sort": "pub_date"
                 }
-                res = await client.get(self.SEARCH_URL, params=search_params)
+                res = await client.get(self.search_url, params=search_params)
                 if res.status_code != 200:
                     return []
                 id_list = res.json().get("esearchresult", {}).get("idlist", [])
@@ -41,7 +43,7 @@ class PubMedRetriever(BaseRetriever):
                     "id": ",".join(id_list),
                     "retmode": "json"
                 }
-                sum_res = await client.get(self.SUMMARY_URL, params=summary_params)
+                sum_res = await client.get(self.summary_url, params=summary_params)
                 if sum_res.status_code != 200:
                     return []
                 result_data = sum_res.json().get("result", {})
@@ -91,4 +93,3 @@ class PubMedRetriever(BaseRetriever):
 
         logger.info(f"PubMed retrieved {len(papers)} valid papers for query: '{query}'")
         return papers
-

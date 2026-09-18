@@ -109,7 +109,7 @@ class ReportExporter:
             "\\end{abstract}",
             "\\section{Introduction}",
             f"Determining underexplored intersections in {clean_topic} requires combinatorial analysis across orthogonal research dimensions. "
-            "Traditional review methodologies summarize individual documents in isolation; here we present a deterministic 2D density formulation.",
+            "Traditional review methodologies summarize individual documents in isolation; here we present a corpus-derived 2D density formulation.",
             "\\section{Identified Research Gaps}"
         ]
 

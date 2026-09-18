@@ -7,14 +7,15 @@ import xml.etree.ElementTree as ET
 from typing import List, Dict, Any
 import httpx
 from src.ingestion.base import BaseRetriever
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
 class ArxivRetriever(BaseRetriever):
     """Retrieves preprint papers from arXiv Export API."""
 
-    BASE_URL = "http://export.arxiv.org/api/query"
-    BASE_URL = "https://export.arxiv.org/api/query"
+    def __init__(self):
+        self.base_url = settings.ARXIV_BASE_URL
 
     async def search(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Query arXiv Atom feed securely."""
@@ -29,7 +30,7 @@ class ArxivRetriever(BaseRetriever):
         papers: List[Dict[str, Any]] = []
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.get(self.BASE_URL, params=params)
+                response = await client.get(self.base_url, params=params)
                 if response.status_code != 200:
                     logger.warning(f"arXiv returned status {response.status_code}")
                     return []
@@ -84,4 +85,3 @@ class ArxivRetriever(BaseRetriever):
 
         logger.info(f"arXiv retrieved {len(papers)} valid papers for query: '{query}'")
         return papers
-

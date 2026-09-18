@@ -6,6 +6,7 @@ Produces 384-dimensional dense vectors for titles and abstracts.
 import logging
 from typing import List, Optional
 import numpy as np
+from sklearn.feature_extraction.text import HashingVectorizer
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class EmbeddingEngine:
                 self._model = SentenceTransformer(self.model_name)
                 logger.info(f"Loaded SentenceTransformer: {self.model_name}")
             except Exception as e:
-                logger.warning(f"Could not load SentenceTransformer ({e}). Using deterministic fallback.")
+                logger.warning(f"Could not load SentenceTransformer ({e}). Using content-based fallback.")
                 self._model = None
             self._initialized = True
 
@@ -44,18 +45,16 @@ class EmbeddingEngine:
             )
             return np.array(embeddings, dtype=np.float32)
 
-        # Deterministic lightweight fallback (e.g. for testing environments without PyTorch)
-        logger.info("Using deterministic hash-based dense embedding fallback.")
-        fallback_vecs = []
-        for text in texts:
-            # Deterministic hash seed based on text content
-            rng = np.random.RandomState(abs(hash(text)) % (2**31))
-            vec = rng.randn(384).astype(np.float32)
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                vec /= norm
-            fallback_vecs.append(vec)
-        return np.array(fallback_vecs, dtype=np.float32)
+        # Lightweight content-based fallback for constrained/test environments.
+        # This preserves lexical similarity instead of generating random vectors.
+        logger.info("Using hashing-vectorizer embedding fallback.")
+        vectorizer = HashingVectorizer(
+            n_features=384,
+            alternate_sign=False,
+            norm="l2",
+            ngram_range=(1, 2)
+        )
+        return vectorizer.transform(texts).astype(np.float32).toarray()
 
     def embed_paper_content(self, title: str, abstract: str) -> List[float]:
         """Encode a single paper title and abstract."""
@@ -63,3 +62,6 @@ class EmbeddingEngine:
         res = self.embed_texts([combined])
         return res[0].tolist()
 
+    def embed_text(self, text: str) -> np.ndarray:
+        """Encode a single text string for retrieval queries."""
+        return self.embed_texts([text])[0]

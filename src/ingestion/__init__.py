@@ -8,6 +8,7 @@ from src.ingestion.openalex import OpenAlexRetriever
 from src.ingestion.semantic_scholar import SemanticScholarRetriever
 from src.ingestion.arxiv_client import ArxivRetriever
 from src.ingestion.pubmed_client import PubMedRetriever
+from src.ingestion.crossref_client import CrossrefRetriever
 from src.ingestion.pdf_parser import AcademicPDFParser
 from src.ingestion.proxy_manager import ProxyManager, proxy_manager
 from src.ingestion.full_paper_downloader import FullPaperDownloader
@@ -19,10 +20,10 @@ __all__ = [
     "SemanticScholarRetriever",
     "ArxivRetriever",
     "PubMedRetriever",
+    "CrossrefRetriever",
     "AcademicPDFParser",
     "ProxyManager",
     "proxy_manager",
     "FullPaperDownloader",
     "HybridIngestionEngine"
 ]
-
