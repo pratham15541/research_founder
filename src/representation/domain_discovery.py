@@ -1,17 +1,19 @@
 """
-Dynamic corpus-derived domain and problem-setting discovery.
-All Axis B labels are inferred from the retrieved papers; no generic domain buckets are used.
+Dynamic Axis B Domain Discovery Engine.
+Infers application domains directly from the paper corpus using NVIDIA AI API or
+silhouette-optimal statistical KMeans phrase clustering.
 """
 
-import logging
 from typing import List, Dict, Any, Optional
+import logging
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 from sklearn.cluster import KMeans
-
+from sklearn.metrics import silhouette_score
 from src.config import settings
 
 logger = logging.getLogger(__name__)
+
 
 class DomainDiscoveryEngine:
     """Discovers application domains and problem settings directly from the paper corpus."""
@@ -22,11 +24,11 @@ class DomainDiscoveryEngine:
         topic_query: str,
         papers: List[Dict[str, Any]],
         embedder: Any,
-        num_domains: int = 5
+        num_domains: Optional[int] = None,
     ) -> List[str]:
         """
-        Dynamically discover 4 to 5 natural application domains or problem regimes
-        present in the corpus using LLM synthesis or corpus phrase clustering.
+        Dynamically discover natural application domains or problem regimes
+        present in the corpus using LLM synthesis or silhouette-optimal unsupervised clustering.
         """
         if not papers:
             raise ValueError("Cannot discover dynamic domains without a paper corpus.")
@@ -39,7 +41,7 @@ class DomainDiscoveryEngine:
         elif settings.LLM_REQUIRED:
             raise RuntimeError("NVIDIA_API_KEY is required for domain discovery because LLM_REQUIRED=true.")
 
-        # Unsupervised statistical clustering discovery
+        # Unsupervised statistical clustering discovery (silhouette-optimal k)
         return cls._discover_unsupervised(papers, embedder, num_domains)
 
     @classmethod
@@ -47,9 +49,9 @@ class DomainDiscoveryEngine:
         cls,
         topic_query: str,
         papers: List[Dict[str, Any]],
-        num_domains: int
+        num_domains: Optional[int] = None,
     ) -> Optional[List[str]]:
-        """Query NVIDIA AI API to summarize natural domains in the corpus."""
+        """Query NVIDIA AI API to dynamically infer the natural domains in the corpus."""
         paper_summaries = []
         for p in papers[:40]:
             title = p.get("title", "")
@@ -58,16 +60,18 @@ class DomainDiscoveryEngine:
                 paper_summaries.append(f"- {title}: {abstract[:240]}")
         corpus_bullet = "\n".join(paper_summaries)
 
+        target_count_str = "between 3 and 6" if num_domains is None else f"exactly {num_domains}"
+
         prompt = f"""You are a principal academic research taxonomist.
 Analyze this paper corpus on the topic "{topic_query}":
 {corpus_bullet}
 
 TASK:
-Infer exactly {num_domains} distinct, mutually exclusive application domains, physical problem settings, datasets, or empirical regimes that are actually present in these papers.
+Infer {target_count_str} distinct, mutually exclusive application domains, physical problem settings, datasets, or empirical regimes that are actually present in these papers.
 Do not use generic buckets. Do not invent fields absent from the corpus. Each label must be grounded in repeated terms from the titles or abstracts.
 
-Respond ONLY with a valid JSON list of {num_domains} strings, formatted as concise domain titles (2 to 4 words each):
-["...", "...", "...", "...", "..."]
+Respond ONLY with a valid JSON list of strings, formatted as concise domain titles (2 to 4 words each):
+["Domain 1", "Domain 2", ...]
 """
         try:
             from src.llm.nvidia_client import NvidiaClient
@@ -77,7 +81,8 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
                 max_tokens=1024
             )
             if isinstance(domains, list) and len(domains) >= 3:
-                return [str(d).strip() for d in domains[:num_domains]]
+                limit = num_domains or 7
+                return [str(d).strip() for d in domains[:limit] if str(d).strip()]
         except Exception as e:
             logger.info(f"NVIDIA LLM domain discovery fallback ({e}). Using unsupervised phrase clustering.")
 
@@ -88,11 +93,11 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
         cls,
         papers: List[Dict[str, Any]],
         embedder: Any,
-        num_domains: int
+        num_domains: Optional[int] = None,
     ) -> List[str]:
         """
         Unsupervised statistical discovery:
-        Extracts distinctive noun phrase n-grams, clusters their embeddings,
+        Extracts distinctive noun phrase n-grams, clusters their embeddings with silhouette-optimal k,
         and derives the top centroid phrases as dynamic domain labels.
         """
         texts = [f"{p.get('title', '')} {p.get('abstract', '')}" for p in papers]
@@ -113,23 +118,40 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
             vec = TfidfVectorizer(ngram_range=(2, 4), max_features=80, stop_words=all_stops)
             X = vec.fit_transform(texts)
             phrases = list(vec.get_feature_names_out())
-            if len(phrases) < num_domains:
+            if len(phrases) < 4:
                 vec = TfidfVectorizer(ngram_range=(1, 3), max_features=80, stop_words=all_stops)
                 X = vec.fit_transform(texts)
                 phrases = list(vec.get_feature_names_out())
 
-            if len(phrases) < num_domains:
+            if len(phrases) < 4:
                 phrases = cls._extract_title_phrases(papers, all_stops)
 
             if not phrases:
                 raise ValueError("Could not derive dynamic domain labels from the corpus.")
 
             phrase_embs = embedder.embed_texts(phrases)
-            k = min(num_domains, len(phrases))
-            if k == 1:
-                return [phrases[0].replace("_", " ").title()]
+            max_possible_k = min(len(phrases) - 1, 7)
 
-            km = KMeans(n_clusters=k, n_init=10)
+            if num_domains is not None:
+                k = max(2, min(num_domains, len(phrases)))
+            elif max_possible_k >= 3:
+                best_k = 3
+                best_sil = -1.0
+                for cand_k in range(3, max_possible_k + 1):
+                    km_cand = KMeans(n_clusters=cand_k, n_init=10, random_state=42)
+                    labels_cand = km_cand.fit_predict(phrase_embs)
+                    try:
+                        sil = float(silhouette_score(phrase_embs, labels_cand))
+                        if sil > best_sil:
+                            best_sil = sil
+                            best_k = cand_k
+                    except Exception:
+                        continue
+                k = best_k
+            else:
+                k = max(2, min(len(phrases), 4))
+
+            km = KMeans(n_clusters=k, n_init=10, random_state=42)
             labels = km.fit_predict(phrase_embs)
 
             domains: List[str] = []
@@ -140,7 +162,6 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
                 c_embs = phrase_embs[cluster_indices]
                 dists = np.linalg.norm(c_embs - centroid, axis=1)
                 best_phrase = cluster_phrases[np.argmin(dists)]
-                # Format phrase cleanly as title case
                 formatted = best_phrase.replace("_", " ").title()
                 domains.append(formatted)
 
@@ -150,14 +171,14 @@ Respond ONLY with a valid JSON list of {num_domains} strings, formatted as conci
                 if d not in unique_domains:
                     unique_domains.append(d)
 
-            if len(unique_domains) >= min(3, k):
+            if len(unique_domains) >= 2:
                 return unique_domains
-            return [p.replace("_", " ").title() for p in phrases[:num_domains]]
+            return [p.replace("_", " ").title() for p in phrases[:k]]
         except Exception as e:
             logger.warning(f"Unsupervised domain discovery error: {e}")
             phrases = cls._extract_title_phrases(papers, all_stops)
             if phrases:
-                return [p.replace("_", " ").title() for p in phrases[:num_domains]]
+                return [p.replace("_", " ").title() for p in phrases[:5]]
             raise
 
     @staticmethod

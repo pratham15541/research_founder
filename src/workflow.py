@@ -38,6 +38,11 @@ from src.rag.faiss_index import FAISSVectorIndex
 from src.synthesis.literature_review import LiteratureReviewGenerator
 from src.synthesis.question_generator import ResearchQuestionGenerator
 from src.evaluation.metrics import EvaluationMetricsEngine
+# ── New 9-stage evidence pipeline ────────────────────────────────────────────
+from src.pipeline.methodological_verifier import MethodologicalVerifier
+from src.pipeline.domain_verifier import DomainVerifier
+from src.pipeline.prior_art_checker import PriorArtChecker
+from src.pipeline.compatibility_reasoner import CompatibilityReasoner
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +105,12 @@ class ResearchWorkflowRunner:
             p["axis_a_tag"] = cluster_info[cid]["label"]
             p["tag_confidence"] = "high" if cid != -1 else "medium"
 
-        # Define Axis B dynamically from retrieved papers
+        # Define Axis B dynamically from retrieved papers (silhouette-optimal count)
         axis_b_labels = DomainDiscoveryEngine.discover_domains(
             topic_query=topic_query,
             papers=paper_dicts,
             embedder=self.embedder,
-            num_domains=5
+            num_domains=None
         )
 
         # Tag Axis B dynamically
@@ -115,16 +120,16 @@ class ResearchWorkflowRunner:
             embedder=self.embedder
         )
 
-        # Step 6: Structured 15-Dimension Knowledge Extraction per Paper
-        logger.info("Extracting structured research dimensions from %d papers...", len(paper_dicts))
+        # Step 6: Structured 15-Dimension + 3-Field Knowledge Extraction per Paper
+        logger.info("Stage 1 — Extracting structured research dimensions + scientific entities from %d papers...", len(paper_dicts))
         structured_records = AcademicPaperExtractor.extract_corpus_records(paper_dicts)
 
-        # Step 7: Literature Evidence Graph & Signal Mining
-        logger.info("Mining evidence graph, recurring limitations, and contradictions...")
+        # Step 7: Literature Evidence Graph & Signal Mining (Stage 4 — with semantic clustering)
+        logger.info("Stage 4 — Building evidence graph (with entity + domain edges) and mining signals...")
         evidence_graph = LiteratureEvidenceGraphBuilder.build_evidence_graph(structured_records)
         evidence_graph_html = LiteratureEvidenceGraphBuilder.export_pyvis_evidence_graph_html(evidence_graph)
-        limitation_clusters = LiteratureEvidenceGraphBuilder.mine_repeated_limitations(structured_records)
-        future_work_clusters = LiteratureEvidenceGraphBuilder.mine_recurring_future_work(structured_records)
+        limitation_clusters = LiteratureEvidenceGraphBuilder.mine_repeated_limitations(structured_records, embedder=self.embedder)
+        future_work_clusters = LiteratureEvidenceGraphBuilder.mine_recurring_future_work(structured_records, embedder=self.embedder)
         contradictions = LiteratureEvidenceGraphBuilder.mine_contradictions(structured_records)
 
         # Step 8: 2D Matrix Aggregation (Preserved for Landscape Visualization)
@@ -136,6 +141,8 @@ class ResearchWorkflowRunner:
         )
 
         # Step 9: Multi-Signal Gap Candidate Generation (8 Signals across 15 Taxonomy Categories)
+        # Step 9a: Multi-Signal Gap Candidate Generation (8 Signals across 15 Taxonomy Categories)
+        logger.info("Generating multi-signal gap candidates...")
         candidate_gaps = MultiSignalGapGenerator.generate_candidates(
             paper_records=structured_records,
             limitation_clusters=limitation_clusters,
@@ -143,6 +150,29 @@ class ResearchWorkflowRunner:
             contradictions=contradictions,
             matrix_result=matrix_result,
             max_candidates=15
+        )
+
+        # ── NEW: Stage 2 — Methodological Verification ──────────────────────
+        logger.info("Stage 2 — Methodological verification for %d candidates...", len(candidate_gaps))
+        candidate_gaps = MethodologicalVerifier.verify_corpus(candidate_gaps, structured_records)
+
+        # ── NEW: Stage 3 — Domain Verification ─────────────────────────────
+        logger.info("Stage 3 — Domain activity verification...")
+        candidate_gaps = DomainVerifier.verify_corpus(candidate_gaps, structured_records)
+
+        # ── NEW: Stage 5 — Prior-Art Saturation Check ────────────────────
+        logger.info("Stage 5 — Prior-art saturation check (graph walk)...")
+        candidate_gaps = PriorArtChecker.check_corpus(candidate_gaps, evidence_graph, structured_records)
+
+        # ── NEW: Stage 7 — Compatibility Reasoning ───────────────────────
+        logger.info("Stage 7 — Compatibility reasoning (method × domain)...")
+        candidate_gaps = CompatibilityReasoner.reason_corpus(candidate_gaps, structured_records)
+
+        # Log pipeline rejection summary
+        total_rejected = sum(1 for c in candidate_gaps if c.get("pipeline_rejections"))
+        logger.info(
+            "Pipeline verification complete: %d/%d candidates have rejections.",
+            total_rejected, len(candidate_gaps)
         )
 
         # Extract future work seeds from uploaded PDFs if any
@@ -205,6 +235,13 @@ class ResearchWorkflowRunner:
             for g in ranked_gaps[:3]
         ]
 
+        # Count pipeline rejections per stage for reporting
+        stage_rejections = {"SPECULATIVE_METHOD": 0, "INACTIVE_DOMAIN": 0,
+                            "SATURATED_GAP": 0, "INCOMPATIBLE": 0, "WEAK_CONTRADICTION": 0}
+        for c in candidate_gaps:
+            for r in c.get("pipeline_rejections", []):
+                stage_rejections[r] = stage_rejections.get(r, 0) + 1
+
         return {
             "topic_query": topic_query,
             "expanded_queries": queries,
@@ -244,7 +281,16 @@ class ResearchWorkflowRunner:
                 "retrieval": retrieval_eval
             },
             "literature_review": lit_review,
-            "research_questions": research_questions
+            "research_questions": research_questions,
+            "pipeline_verification_summary": {
+                "total_candidates": len(candidate_gaps),
+                "stage_rejections": stage_rejections,
+                "total_rejected": sum(stage_rejections.values()),
+                "stages_run": ["Stage1_EntityExtraction", "Stage2_MethodVerification",
+                               "Stage3_DomainVerification", "Stage4_EvidenceGraph",
+                               "Stage5_PriorArtSaturation", "Stage6_ContradictionVerification",
+                               "Stage7_CompatibilityReasoning", "Stage8_GapScoring"],
+            },
         }
 
     @staticmethod

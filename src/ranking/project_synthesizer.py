@@ -104,19 +104,39 @@ class ResearchProjectSynthesizer:
         ]
 
         # Research Question & Hypotheses
+        # Dynamically discover metrics and datasets from papers in the neighborhood
+        all_neighbor_papers = (papers_a or []) + (papers_b or [])
+        extracted_metrics: List[str] = []
+        extracted_datasets: List[str] = []
+        for p in all_neighbor_papers:
+            if isinstance(p, dict):
+                for m in p.get("evaluation_metrics", []):
+                    if m and str(m) not in extracted_metrics:
+                        extracted_metrics.append(str(m))
+                ds = p.get("dataset")
+                if ds and str(ds) not in extracted_datasets:
+                    extracted_datasets.append(str(ds))
+
+        # Dataset & Metric Formulation
+        dataset_name = extracted_datasets[0] if extracted_datasets else f"{b_clean} Benchmark Dataset"
+        metric_list = extracted_metrics[:3] if extracted_metrics else ["Task-Specific Accuracy / Loss", "Generalization Score", "Sample Efficiency"]
+        primary_metric = metric_list[0]
+
+        # Research Question & Hypotheses (derived from domain & method, no hardcoded percentages)
         core_q = f"How does the integration of {a_clean} address unresolved {gap_type.lower()} constraints in {b_clean}?"
-        h1 = f"Systematic application of {a_clean} will improve out-of-distribution generalization and stability by at least 15% over conventional baselines in {b_clean}."
-        h0 = f"There is no statistically significant performance difference between {a_clean} and standard baselines in {b_clean}."
+        h1 = (
+            f"Formulating {b_clean} problems with {a_clean} principles yields statistically significant improvements "
+            f"in {primary_metric} compared to established {b_clean} baselines."
+        )
+        h0 = f"There is no statistically significant performance difference between {a_clean} and standard baselines in {b_clean} on {primary_metric}."
 
         # Grounded Experiment Specification
-        dataset_name = f"{b_clean} Standard Benchmark Suite"
-        indep_var_list = [f"Presence/absence of {a_clean} formulation", "Training sample scale (100%, 50%, 25%, 10%)"]
-        metric_list = ["Mean Absolute Error / Accuracy", "F1 Score / Convergence Latency", "Sample Efficiency Index"]
+        indep_var_list = [f"Integration of {a_clean} formulation", "Training sample scale (100%, 50%, 25%, 10%)"]
 
         experiment_protocol = {
             "target_dataset": dataset_name,
             "benchmark_dataset": dataset_name,
-            "baselines": ["Classical Standard Baseline", f"State-of-the-Art in {b_clean}", "Ablated Inductive Prior"],
+            "baselines": [f"Standard {b_clean} Baseline", f"State-of-the-Art in {b_clean}", f"Ablated {a_clean} Variant"],
             "independent_variables": indep_var_list,
             "independent_variable": indep_var_list[0],
             "experimental_conditions": [
@@ -135,6 +155,7 @@ class ResearchProjectSynthesizer:
             f"Baselines: SOTA in {b_clean}. "
             f"Independent Variable: Training data scale (100%, 50%, 25%, 10%). "
             f"Metrics: Accuracy, F1, Loss Convergence. "
+            f"Metrics: {', '.join(metric_list)}. "
             f"Statistical Test: Paired Wilcoxon signed-rank test."
         )
 

@@ -33,6 +33,9 @@ CANONICAL_LIMITATION_KEYS = [
     ("Adversarial Robustness & Noise Sensitivity", ["robustness", "noise", "adversarial", "perturbation", "sensitivity", "outlier"]),
     ("Pediatric / Demographic Population Underrepresentation", ["pediatric", "children", "demographic", "subgroup", "gender", "ethnicity", "population bias"])
 ]
+# NOTE: CANONICAL_LIMITATION_KEYS and CANONICAL_FUTURE_WORK_KEYS are removed.
+# Categories are now discovered dynamically from the corpus via semantic clustering.
+# See mine_repeated_limitations() and mine_recurring_future_work() below.
 
 # Canonical future work categories
 CANONICAL_FUTURE_WORK_KEYS = [
@@ -197,107 +200,282 @@ class LiteratureEvidenceGraphBuilder:
                         G.add_node(fw_id, node_type="future_work", label=canon_fw[:30], title=f"Future Work: {fw_text}", color="#06b6d4", size=16)
                     G.add_edge(pid, fw_id, rel="proposes_future_work", label="proposes", quote=fw_text)
 
+        # ---- Cross-paper ENTITY_SHARED edges --------------------------------
+        paper_entity_map: dict = {}
+        for p in paper_records:
+            pid = str(p.get("paper_id") or p.get("id") or p.get("title", ""))[:32]
+            entities = [str(e).strip() for e in p.get("scientific_entities", []) if str(e).strip()]
+            paper_entity_map[pid] = entities
+
+        seen_entity_edges: set = set()
+        for pid_a, ents_a in paper_entity_map.items():
+            for pid_b, ents_b in paper_entity_map.items():
+                if pid_a >= pid_b:
+                    continue
+                shared = set(e.lower() for e in ents_a) & set(e.lower() for e in ents_b)
+                if shared and G.has_node(pid_a) and G.has_node(pid_b):
+                    edge_key = (pid_a, pid_b)
+                    if edge_key not in seen_entity_edges:
+                        G.add_edge(
+                            pid_a, pid_b,
+                            rel="ENTITY_SHARED",
+                            label=f"shares: {', '.join(list(shared)[:2])}",
+                        )
+                        seen_entity_edges.add(edge_key)
+
+        # ---- METHOD_APPLIED_TO_DOMAIN edges ---------------------------------
+        for p in paper_records:
+            pid = str(p.get("paper_id") or p.get("id") or p.get("title", ""))[:32]
+            method = p.get("method")
+            domain_tags: list = p.get("domain_tags", [])
+            if not method or not G.has_node(pid):
+                continue
+            m_id = f"method_{cls._slug(method)}"
+            for dtag in domain_tags[:3]:
+                d_id = f"domain_{cls._slug(dtag)}"
+                if not G.has_node(d_id):
+                    G.add_node(
+                        d_id,
+                        node_type="domain",
+                        label=dtag[:25],
+                        title=f"Domain: {dtag}",
+                        color="#6366f1",
+                        size=15,
+                    )
+                if G.has_node(m_id) and not G.has_edge(m_id, d_id):
+                    G.add_edge(m_id, d_id, rel="METHOD_APPLIED_TO_DOMAIN", label="applied in")
+
         logger.info("Built Literature Evidence Graph: %d nodes, %d edges", G.number_of_nodes(), G.number_of_edges())
         return G
 
     @classmethod
-    def mine_repeated_limitations(cls, paper_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def mine_repeated_limitations(
+        cls,
+        paper_records: List[Dict[str, Any]],
+        embedder=None,
+    ) -> List[Dict[str, Any]]:
         """
-        Cluster similar limitations across papers to find repeated unresolved limitations.
-        Returns list of clusters with canonical name, frequency, and supporting quotes.
+        Discover recurring limitation themes via semantic clustering.
         """
-        limitation_clusters: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-            "canonical_name": "",
-            "frequency": 0,
-            "paper_ids": [],
-            "paper_titles": [],
-            "evidence_quotes": [],
-            "years": []
-        })
-
+        raw: List[Dict] = []
         for p in paper_records:
-            pid = str(p.get("paper_id") or p.get("id") or p.get("title", ""))
+            pid   = str(p.get("paper_id") or p.get("id") or p.get("title", ""))
             title = p.get("title", "")
-            year = p.get("year", 2024)
-
+            year  = p.get("year", 2024)
             for lim in p.get("limitations", []):
-                lim_text = str(lim).strip()
-                if len(lim_text) < 15:
-                    continue
-                canonical = cls._canonicalize_limitation(lim_text)
-                c = limitation_clusters[canonical]
-                c["canonical_name"] = canonical
-                c["frequency"] += 1
-                if pid not in c["paper_ids"]:
-                    c["paper_ids"].append(pid)
-                    c["paper_titles"].append(title)
-                c["evidence_quotes"].append({"paper_title": title, "quote": lim_text, "year": year})
-                c["years"].append(year)
+                text = str(lim).strip()
+                if len(text) >= 15:
+                    raw.append({"text": text, "pid": pid, "title": title, "year": year})
 
-        # Sort by frequency descending
-        sorted_clusters = sorted(
-            [c for c in limitation_clusters.values() if c["frequency"] >= 1],
-            key=lambda x: (len(x["paper_ids"]), x["frequency"]),
-            reverse=True
-        )
-        return sorted_clusters
+        if not raw:
+            return []
+
+        texts = [r["text"] for r in raw]
+
+        # ── Semantic clustering path ──────────────────────────────────────
+        if embedder is not None:
+            try:
+                from src.graph.semantic_clustering import silhouette_optimal_kmeans
+                labels, centroids, cluster_ids = silhouette_optimal_kmeans(
+                    texts, embedder, min_k=2, max_k=min(8, len(texts))
+                )
+                clusters: List[Dict[str, Any]] = []
+                for cid, representative in zip(cluster_ids, centroids):
+                    members = [raw[i] for i, l in enumerate(labels) if l == cid]
+                    seen_pids: set = set()
+                    paper_titles: List[str] = []
+                    quotes: List[Dict] = []
+                    years: List[int] = []
+                    for m in members:
+                        quotes.append({"paper_title": m["title"], "quote": m["text"], "year": m["year"]})
+                        years.append(int(m["year"]))
+                        if m["pid"] not in seen_pids:
+                            seen_pids.add(m["pid"])
+                            paper_titles.append(m["title"])
+                    clusters.append({
+                        "canonical_name": representative,
+                        "frequency": len(members),
+                        "paper_ids": list(seen_pids),
+                        "paper_titles": paper_titles,
+                        "evidence_quotes": quotes[:5],
+                        "years": years,
+                    })
+                clusters.sort(key=lambda x: (len(x["paper_ids"]), x["frequency"]), reverse=True)
+                return clusters
+            except Exception as e:
+                logger.debug("Semantic limitation clustering failed (%s); using Jaccard fallback.", e)
+
+        # ── Jaccard-overlap fallback (no embedder) ───────────────────────
+        def tokens(t: str) -> set:
+            return set(re.findall(r"[a-z]{4,}", t.lower()))
+
+        groups: List[List[Dict]] = []
+        for item in raw:
+            item_tok = tokens(item["text"])
+            placed = False
+            for g in groups:
+                rep_tok = tokens(g[0]["text"])
+                union = rep_tok | item_tok
+                inter = rep_tok & item_tok
+                if union and (len(inter) / len(union)) >= 0.30:
+                    g.append(item)
+                    placed = True
+                    break
+            if not placed:
+                groups.append([item])
+
+        clusters_out: List[Dict[str, Any]] = []
+        for g in groups:
+            seen_pids: set = set()
+            paper_titles: List[str] = []
+            quotes: List[Dict] = []
+            years: List[int] = []
+            for m in g:
+                quotes.append({"paper_title": m["title"], "quote": m["text"], "year": m["year"]})
+                years.append(int(m["year"]))
+                if m["pid"] not in seen_pids:
+                    seen_pids.add(m["pid"])
+                    paper_titles.append(m["title"])
+            representative = max(g, key=lambda x: len(x["text"]))["text"]
+            clusters_out.append({
+                "canonical_name": representative,
+                "frequency": len(g),
+                "paper_ids": list(seen_pids),
+                "paper_titles": paper_titles,
+                "evidence_quotes": quotes[:5],
+                "years": years,
+            })
+        clusters_out.sort(key=lambda x: (len(x["paper_ids"]), x["frequency"]), reverse=True)
+        return clusters_out
 
     @classmethod
-    def mine_recurring_future_work(cls, paper_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def mine_recurring_future_work(
+        cls,
+        paper_records: List[Dict[str, Any]],
+        embedder=None,
+    ) -> List[Dict[str, Any]]:
         """
-        Cluster future work statements and verify whether subsequent papers have already solved them.
+        Discover recurring future-work directions via semantic clustering,
+        then verify whether subsequent papers have already addressed them.
         """
-        fw_clusters: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-            "canonical_direction": "",
-            "frequency": 0,
-            "proposing_papers": [],
-            "evidence_quotes": [],
-            "earliest_year": 9999,
-            "latest_year": 0,
-            "is_already_addressed": False,
-            "addressing_papers": []
-        })
-
+        raw: List[Dict] = []
         for p in paper_records:
-            pid = str(p.get("paper_id") or p.get("id") or p.get("title", ""))
+            pid   = str(p.get("paper_id") or p.get("id") or p.get("title", ""))
             title = p.get("title", "")
-            year = int(p.get("year") or 2024)
-
+            year  = int(p.get("year") or 2024)
             for fw in p.get("future_work", []):
-                fw_text = str(fw).strip()
-                if len(fw_text) < 15:
-                    continue
-                canonical = cls._canonicalize_future_work(fw_text)
-                c = fw_clusters[canonical]
-                c["canonical_direction"] = canonical
-                c["frequency"] += 1
-                if pid not in [x["id"] for x in c["proposing_papers"]]:
-                    c["proposing_papers"].append({"id": pid, "title": title, "year": year})
-                c["evidence_quotes"].append({"paper_title": title, "quote": fw_text, "year": year})
-                c["earliest_year"] = min(c["earliest_year"], year)
-                c["latest_year"] = max(c["latest_year"], year)
+                text = str(fw).strip()
+                if len(text) >= 15:
+                    raw.append({"text": text, "pid": pid, "title": title, "year": year})
 
-        # Check if subsequent papers address the direction
-        for c in fw_clusters.values():
+        if not raw:
+            return []
+
+        texts = [r["text"] for r in raw]
+
+        # ── Semantic clustering ──────────────────────────────────────────
+        if embedder is not None:
+            try:
+                from src.graph.semantic_clustering import silhouette_optimal_kmeans
+                labels, centroids, cluster_ids = silhouette_optimal_kmeans(
+                    texts, embedder, min_k=2, max_k=min(8, len(texts))
+                )
+                grouped: List[Dict[str, Any]] = []
+                for cid, representative in zip(cluster_ids, centroids):
+                    members = [raw[i] for i, l in enumerate(labels) if l == cid]
+                    seen_pids: set = set()
+                    proposing: List[Dict] = []
+                    quotes: List[Dict] = []
+                    earliest, latest = 9999, 0
+                    for m in members:
+                        quotes.append({"paper_title": m["title"], "quote": m["text"], "year": m["year"]})
+                        earliest = min(earliest, m["year"])
+                        latest = max(latest, m["year"])
+                        if m["pid"] not in seen_pids:
+                            seen_pids.add(m["pid"])
+                            proposing.append({"id": m["pid"], "title": m["title"], "year": m["year"]})
+                    grouped.append({
+                        "canonical_direction": representative,
+                        "frequency": len(members),
+                        "proposing_papers": proposing,
+                        "evidence_quotes": quotes[:5],
+                        "earliest_year": earliest,
+                        "latest_year": latest,
+                        "is_already_addressed": False,
+                        "addressing_papers": [],
+                    })
+                cls._check_addressed(grouped, paper_records)
+                grouped.sort(key=lambda x: (not x["is_already_addressed"], x["frequency"]), reverse=True)
+                return grouped
+            except Exception as e:
+                logger.debug("Semantic future-work clustering failed (%s); using Jaccard fallback.", e)
+
+        # ── Jaccard fallback ────────────────────────────────────────────
+        def tokens(t: str) -> set:
+            return set(re.findall(r"[a-z]{4,}", t.lower()))
+
+        groups: List[List[Dict]] = []
+        for item in raw:
+            item_tok = tokens(item["text"])
+            placed = False
+            for g in groups:
+                rep_tok = tokens(g[0]["text"])
+                union = rep_tok | item_tok
+                inter = rep_tok & item_tok
+                if union and (len(inter) / len(union)) >= 0.30:
+                    g.append(item)
+                    placed = True
+                    break
+            if not placed:
+                groups.append([item])
+
+        result: List[Dict[str, Any]] = []
+        for g in groups:
+            seen_pids: set = set()
+            proposing: List[Dict] = []
+            quotes: List[Dict] = []
+            earliest, latest = 9999, 0
+            for m in g:
+                quotes.append({"paper_title": m["title"], "quote": m["text"], "year": m["year"]})
+                earliest = min(earliest, m["year"])
+                latest = max(latest, m["year"])
+                if m["pid"] not in seen_pids:
+                    seen_pids.add(m["pid"])
+                    proposing.append({"id": m["pid"], "title": m["title"], "year": m["year"]})
+            representative = max(g, key=lambda x: len(x["text"]))["text"]
+            result.append({
+                "canonical_direction": representative,
+                "frequency": len(g),
+                "proposing_papers": proposing,
+                "evidence_quotes": quotes[:5],
+                "earliest_year": earliest,
+                "latest_year": latest,
+                "is_already_addressed": False,
+                "addressing_papers": [],
+            })
+        cls._check_addressed(result, paper_records)
+        result.sort(key=lambda x: (not x["is_already_addressed"], x["frequency"]), reverse=True)
+        return result
+
+    @staticmethod
+    def _check_addressed(
+        fw_clusters: List[Dict[str, Any]],
+        paper_records: List[Dict[str, Any]],
+    ) -> None:
+        """Mark clusters already resolved by later papers (token-overlap ≥ 0.75, published after)."""
+        for c in fw_clusters:
             keywords = [w.lower() for w in re.findall(r"[A-Za-z]{4,}", c["canonical_direction"])]
             addressing = []
             for p in paper_records:
                 p_year = int(p.get("year") or 2024)
-                if p_year > c["earliest_year"]:
+                if p_year > c.get("earliest_year", 0):
                     text = f"{p.get('title', '')} {p.get('abstract', '')}".lower()
                     matched = sum(1 for kw in keywords if kw in text)
-                    if len(keywords) > 0 and (matched / len(keywords)) >= 0.75:
+                    if keywords and (matched / len(keywords)) >= 0.75:
                         addressing.append(p.get("title"))
             if len(addressing) >= 2:
                 c["is_already_addressed"] = True
                 c["addressing_papers"] = addressing[:3]
-
-        sorted_fw = sorted(
-            list(fw_clusters.values()),
-            key=lambda x: (not x["is_already_addressed"], x["frequency"]),
-            reverse=True
-        )
-        return sorted_fw
 
     @classmethod
     def mine_contradictions(cls, paper_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -406,8 +584,35 @@ class LiteratureEvidenceGraphBuilder:
                 c["finding_b"] = c["paper_b"]["finding"]
             if "conflict_summary" not in c:
                 c["conflict_summary"] = c["synthesis"]
+            # Classify contradiction type
+            c["contradiction_class"] = cls._classify_contradiction(c)
 
         return contradictions
+
+    @staticmethod
+    def _classify_contradiction(contradiction: dict) -> str:
+        """
+        Classify a detected contradiction into one of four categories:
+          DATASET_ARTIFACT       — papers use different datasets/benchmarks
+          HYPERPARAMETER_SENSITIVITY — differences attributable to tuning choices
+          DOMAIN_MISMATCH        — studies operate in different domains/environments
+          GENUINE_CONFLICT       — same setup, opposing empirical conclusions
+        """
+        f_a = str(contradiction.get("finding_a", "")).lower()
+        f_b = str(contradiction.get("finding_b", "")).lower()
+        combined = f_a + " " + f_b
+
+        dataset_signals = ["dataset", "benchmark", "corpus", "training set", "test set"]
+        hyp_signals = ["hyperparameter", "learning rate", "batch size", "tuning", "configuration"]
+        domain_signals = ["domain", "environment", "clinical", "laboratory", "simulation", "real-world"]
+
+        if any(kw in combined for kw in dataset_signals):
+            return "DATASET_ARTIFACT"
+        if any(kw in combined for kw in hyp_signals):
+            return "HYPERPARAMETER_SENSITIVITY"
+        if any(kw in combined for kw in domain_signals):
+            return "DOMAIN_MISMATCH"
+        return "GENUINE_CONFLICT"
 
     @classmethod
     def export_pyvis_evidence_graph_html(

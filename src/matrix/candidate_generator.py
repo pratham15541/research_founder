@@ -41,8 +41,84 @@ GAP_TAXONOMY = [
     "Generalization Gap",
     "Contradiction Gap",
     "Knowledge Gap",
-    "Underexplored Intersection"
+    "Knowledge Gap",
+    "Underexplored Intersection",
 ]
+
+
+def _classify_gap_type_llm(candidates: List[Dict[str, Any]]) -> None:
+    """
+    Batch-classify up to 15 candidates into the 15-category taxonomy using LLM.
+    Mutates candidates in-place with 'gap_type'.
+    Falls back to _classify_gap_type_semantic on LLM failure.
+    """
+    try:
+        from src.config import settings
+        if not settings.DYNAMIC_LLM_ENABLED or not settings.NVIDIA_API_KEY:
+            raise RuntimeError("LLM disabled")
+        from src.llm.nvidia_client import NvidiaClient
+
+        items = [
+            {"id": i, "gap_title": c.get("gap_title", ""), "axis_a": c.get("axis_a", ""), "axis_b": c.get("axis_b", "")}
+            for i, c in enumerate(candidates)
+        ]
+        taxonomy_list = ", ".join(f'"{t}"' for t in GAP_TAXONOMY)
+        prompt = f"""You are a research taxonomy classifier.
+
+Classify each of the following candidate research gaps into exactly one category
+from this taxonomy: [{taxonomy_list}].
+
+Return a valid JSON array where each element has:
+  {{"id": <integer>, "gap_type": "<taxonomy category>"}}
+
+Gaps to classify:
+{items}"""
+
+        result = NvidiaClient.generate_json(
+            prompt=prompt,
+            temperature=0.1,
+            max_tokens=600,
+            timeout=getattr(settings, "LLM_TIMEOUT_SECONDS", 35.0),
+        )
+        if isinstance(result, list):
+            id_to_type = {r["id"]: r["gap_type"] for r in result if "id" in r and "gap_type" in r}
+            for i, cand in enumerate(candidates):
+                gt = id_to_type.get(i, "")
+                if gt in GAP_TAXONOMY:
+                    cand["gap_type"] = gt
+            return
+    except Exception:
+        pass
+    # Fallback: semantic cosine classification
+    _classify_gap_type_semantic(candidates)
+
+
+def _classify_gap_type_semantic(candidates: List[Dict[str, Any]]) -> None:
+    """
+    Classify gap_type by cosine similarity between gap text and taxonomy label embeddings.
+    Pure continuous scoring — no string matching.
+    Falls back to frequency heuristic if embedder unavailable.
+    """
+    try:
+        import numpy as np
+        from src.representation.embeddings import EmbeddingEngine
+        embedder = EmbeddingEngine()
+        taxonomy_embs = np.array(embedder.embed_texts(GAP_TAXONOMY))
+        taxonomy_norm = taxonomy_embs / np.maximum(np.linalg.norm(taxonomy_embs, axis=1, keepdims=True), 1e-12)
+
+        for cand in candidates:
+            text = f"{cand.get('gap_title', '')} {cand.get('axis_a', '')} {cand.get('axis_b', '')} {cand.get('why_it_is_insufficient', '')}"
+            cand_emb = np.array(embedder.embed_texts([text])[0])
+            cand_norm = cand_emb / max(np.linalg.norm(cand_emb), 1e-12)
+            sims = taxonomy_norm @ cand_norm
+            best_idx = int(np.argmax(sims))
+            cand["gap_type"] = GAP_TAXONOMY[best_idx]
+            cand["gap_type_confidence"] = float(round(sims[best_idx], 3))
+    except Exception:
+        # Last resort: leave gap_type unchanged if already set, else default
+        for cand in candidates:
+            if "gap_type" not in cand or not cand["gap_type"]:
+                cand["gap_type"] = "Knowledge Gap"
 
 
 class MultiSignalGapGenerator:
@@ -68,38 +144,28 @@ class MultiSignalGapGenerator:
         """Generate candidate gaps across all 8 scientific signals with flexible keyword args."""
         papers = paper_records if paper_records is not None else (records or [])
         limits = limitation_clusters if limitation_clusters is not None else (repeated_limitations or [])
-        fw = future_work_clusters if future_work_clusters is not None else (recurring_future_work or [])
+        fw     = future_work_clusters if future_work_clusters is not None else (recurring_future_work or [])
         contra = contradictions or []
         candidates: List[Dict[str, Any]] = []
 
-        # Signal 1: Repeated Unresolved Limitations
         cls._generate_from_limitations(limits, papers, candidates)
-
-        # Signal 2: Recurring Future Work Directions
         cls._generate_from_future_work(fw, papers, candidates)
-
-        # Signal 3: Contradictory Empirical Findings
         cls._generate_from_contradictions(contra, papers, candidates)
-
-        # Signal 4: Missing Cross-Benchmark / Evaluation Gaps
         cls._generate_from_evaluation_deficits(papers, candidates)
-
-        # Signal 5 & 6: Population & Environment Gaps (Lab vs Real-World, Pediatric vs Adult)
         cls._generate_from_population_and_environment(papers, candidates)
-
-        # Signal 7: Missing Multi-Method Comparisons
         cls._generate_from_missing_comparisons(papers, candidates)
-
-        # Signal 8: Underexplored Combinatorial Intersections (from 2D Matrix Voids)
         if matrix_result:
             cls._generate_from_matrix_voids(matrix_result, papers, candidates)
 
-        # Enrich each candidate with temporal trend analysis
+        # ── Dynamic taxonomy classification (LLM → semantic → last-resort) ──
+        _classify_gap_type_llm(candidates)
+
+        # Temporal trend analysis
         for cand in candidates:
             cand["temporal_analysis"] = cls._analyze_temporal_trend(cand, papers)
             cand["temporal_trend"] = cand["temporal_analysis"].get("trend_label", "Persistent Gap")
 
-        logger.info("Generated %d multi-signal gap candidates across the 15-category taxonomy.", len(candidates))
+        logger.info("Generated %d multi-signal gap candidates (taxonomy assigned dynamically).", len(candidates))
         return candidates[:max_candidates]
 
     @classmethod
@@ -107,43 +173,30 @@ class MultiSignalGapGenerator:
         cls,
         limitation_clusters: List[Dict[str, Any]],
         paper_records: List[Dict[str, Any]],
-        candidates: List[Dict[str, Any]]
+        candidates: List[Dict[str, Any]],
     ) -> None:
         """Signal 1: Repeated unresolved limitations."""
         for cluster in limitation_clusters[:3]:
-            canon_name = cluster["canonical_name"]
-            freq = cluster["frequency"]
-            quotes = cluster["evidence_quotes"]
+            canon_name     = cluster["canonical_name"]
+            freq           = cluster["frequency"]
+            quotes         = cluster["evidence_quotes"]
             papers_involved = cluster["paper_titles"]
+            supporting     = [{"title": q["paper_title"], "quote": q["quote"], "year": q["year"]} for q in quotes[:3]]
+            p_count        = len(cluster.get("paper_ids") or cluster.get("papers") or cluster.get("paper_titles") or [])
 
-            # Map to Taxonomy
-            gap_type = "Generalization Gap"
-            if "Dataset" in canon_name or "Sample Size" in canon_name:
-                gap_type = "Dataset Gap"
-            elif "Real-World" in canon_name or "Validation" in canon_name:
-                gap_type = "Evaluation Gap"
-            elif "Computational" in canon_name or "Complexity" in canon_name:
-                gap_type = "Scalability Gap"
-            elif "Theoretical" in canon_name:
-                gap_type = "Theoretical Gap"
-
-            supporting = [{"title": q["paper_title"], "quote": q["quote"], "year": q["year"]} for q in quotes[:3]]
-
-            p_list = cluster.get("paper_ids") or cluster.get("papers") or cluster.get("paper_titles") or []
-            p_count = len(p_list)
-
+            # gap_type will be overwritten by LLM/semantic classifier — use placeholder
             candidates.append({
                 "candidate_id": f"cand_lim_{len(candidates)+1}",
-                "gap_title": f"Unresolved Limitation: {canon_name}",
-                "gap_type": gap_type,
-                "signal_type": "Signal 1: Repeated Limitations",
+                "gap_title":    f"Unresolved Limitation: {canon_name}",
+                "gap_type":     "Knowledge Gap",   # placeholder, replaced by _classify_gap_type_llm
+                "signal_type":  "Signal 1: Repeated Limitations",
                 "signal_source": f"Signal 1: Repeated Limitations across {p_count} independent papers in the corpus",
-                "what_has_been_studied": f"The corpus extensively demonstrates core algorithmic viability, cited in {p_count} studies ({', '.join(papers_involved[:2])}).",
+                "what_has_been_studied":     f"The corpus demonstrates core algorithmic viability cited in {p_count} studies ({', '.join(papers_involved[:2])}).",
                 "what_remains_insufficient": f"The literature repeatedly encounters bottlenecks regarding '{canon_name}'.",
-                "why_it_is_insufficient": f"Existing studies explicitly cite {canon_name.lower()} as an open barrier preventing out-of-distribution or production translation.",
+                "why_it_is_insufficient":    f"Existing studies explicitly cite {canon_name.lower()} as an open barrier preventing production translation.",
                 "supporting_papers": supporting,
                 "axis_a": canon_name,
-                "axis_b": "Corpus Benchmark Suite"
+                "axis_b": "Corpus Benchmark Suite",
             })
 
     @classmethod
@@ -151,36 +204,28 @@ class MultiSignalGapGenerator:
         cls,
         future_work_clusters: List[Dict[str, Any]],
         paper_records: List[Dict[str, Any]],
-        candidates: List[Dict[str, Any]]
+        candidates: List[Dict[str, Any]],
     ) -> None:
         """Signal 2: Recurring future work unaddressed."""
         for cluster in future_work_clusters[:3]:
             if cluster.get("is_already_addressed"):
-                continue  # Skip closed gaps
-            direction = cluster["canonical_direction"]
+                continue
+            direction      = cluster["canonical_direction"]
             papers_involved = [p["title"] for p in cluster["proposing_papers"]]
-            supporting = [{"title": q["paper_title"], "quote": q["quote"], "year": q["year"]} for q in cluster["evidence_quotes"][:3]]
-
-            gap_type = "Methodological Gap"
-            if "Multimodal" in direction or "Cross-Domain" in direction:
-                gap_type = "Generalization Gap"
-            elif "Edge" in direction or "Hardware" in direction:
-                gap_type = "Scalability Gap"
-            elif "Theoretical" in direction:
-                gap_type = "Theoretical Gap"
+            supporting     = [{"title": q["paper_title"], "quote": q["quote"], "year": q["year"]} for q in cluster["evidence_quotes"][:3]]
 
             candidates.append({
                 "candidate_id": f"cand_fw_{len(candidates)+1}",
-                "gap_title": f"Unaddressed Future Trajectory: {direction}",
-                "gap_type": gap_type,
-                "signal_type": "Signal 2: Recurring Future Work",
-                "signal_source": f"Signal 2: Recurring Future Work proposed by {len(papers_involved)} papers without subsequent corpus resolution",
-                "what_has_been_studied": f"Authors have validated primary baselines but explicitly earmarked '{direction}' for next-phase investigation.",
+                "gap_title":    f"Unaddressed Future Trajectory: {direction}",
+                "gap_type":     "Methodological Gap",  # placeholder
+                "signal_type":  "Signal 2: Recurring Future Work",
+                "signal_source": f"Signal 2: Recurring Future Work proposed by {len(papers_involved)} papers without corpus resolution",
+                "what_has_been_studied":     f"Authors have validated primary baselines but explicitly earmarked '{direction}' for next-phase investigation.",
                 "what_remains_insufficient": f"No paper in the retrieved corpus provides empirical resolution for {direction.lower()}.",
-                "why_it_is_insufficient": f"Authors cite lack of unified data infrastructure or cross-disciplinary validation as the reason this remains untried.",
+                "why_it_is_insufficient":    "Authors cite lack of unified data infrastructure or cross-disciplinary validation as the reason this remains untried.",
                 "supporting_papers": supporting,
                 "axis_a": direction,
-                "axis_b": "Emerging Frontiers"
+                "axis_b": "Emerging Frontiers",
             })
 
     @classmethod

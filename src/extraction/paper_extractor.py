@@ -171,6 +171,10 @@ Extract and return a valid JSON object matching this exact schema:
   "future_work": ["suggested future direction 1", "suggested future direction 2"],
   "assumptions": ["underlying assumption 1"],
   "conflicting_findings": ["inconsistency or trade-off observed"]
+  "conflicting_findings": ["inconsistency or trade-off observed"],
+  "scientific_entities": ["named algorithm", "benchmark name", "model name", "dataset name"],
+  "methodology_class": "empirical or theoretical or survey or mixed",
+  "domain_tags": ["fine-grained domain 1", "fine-grained domain 2"]
 }}"""
         try:
             from src.llm.nvidia_client import NvidiaClient
@@ -285,6 +289,49 @@ Extract and return a valid JSON object matching this exact schema:
         assumptions = [f"Assumes stationarity and clean signal conditions in {domain}."]
         conflicting = [f"Performance trade-off observed between runtime efficiency and asymptotic accuracy."]
 
+        # Scientific Entities: key named entities from the paper
+        scientific_entities: list = []
+        entity_patterns = [
+            re.compile(r"\b([A-Z][A-Za-z0-9\-]+(?:\s+[A-Z][A-Za-z0-9\-]+){0,3})\b"),  # CamelCase names
+            re.compile(r"\b(?:BERT|GPT|ResNet|LSTM|GAN|CNN|PINN|FNO|DeepONet|ViT|DiffusionModel|XGBoost|YOLO)\b", re.IGNORECASE),
+        ]
+        entity_text = f"{abstract} {sections.get('methods', '')} {title}"
+        for pat in entity_patterns:
+            for m in pat.finditer(entity_text):
+                ent = m.group(0).strip()
+                if 3 < len(ent) < 40 and ent not in scientific_entities and not ent.lower() in {"this", "that", "with", "from", "also"}:
+                    scientific_entities.append(ent)
+        if not scientific_entities:
+            scientific_entities = [method, dataset_name]
+
+        # Methodology class: heuristic classification
+        abstract_lower = abstract.lower()
+        if any(w in abstract_lower for w in ["survey", "systematic review", "literature review"]):
+            methodology_class = "survey"
+        elif any(w in abstract_lower for w in ["theorem", "proof", "convergence rate", "error bound", "theoretical"]):
+            methodology_class = "theoretical"
+        elif any(w in abstract_lower for w in ["experiment", "benchmark", "dataset", "accuracy", "ablation"]):
+            methodology_class = "empirical"
+        else:
+            methodology_class = "mixed"
+
+        # Domain tags: extract multi-level domain descriptors
+        domain_tags = [domain]
+        domain_kw_map = {
+            "NLP": ["natural language", "nlp", "text", "language model", "sentiment"],
+            "Computer Vision": ["image", "vision", "object detection", "segmentation", "visual"],
+            "Scientific ML": ["physics-informed", "pinn", "neural operator", "pde", "fno"],
+            "Reinforcement Learning": ["reinforcement", "reward", "policy", "agent", "mdp"],
+            "Graph Learning": ["graph neural", "gnn", "knowledge graph", "node classification"],
+            "Generative AI": ["diffusion", "generative", "gan", "vae", "latent"],
+            "Biomedical": ["clinical", "medical", "ehr", "patient", "diagnosis", "biomedical"],
+            "Time Series": ["time series", "temporal", "forecasting", "anomaly detection"],
+        }
+        for tag, keywords in domain_kw_map.items():
+            if any(kw in abstract_lower for kw in keywords):
+                if tag not in domain_tags:
+                    domain_tags.append(tag)
+
         return {
             "paper_id": paper.get("id"),
             "title": title,
@@ -302,8 +349,12 @@ Extract and return a valid JSON object matching this exact schema:
             "future_work": future_work[:3],
             "assumptions": assumptions[:2],
             "conflicting_findings": conflicting[:2],
+            "scientific_entities": list(dict.fromkeys(scientific_entities))[:10],
+            "methodology_class": methodology_class,
+            "domain_tags": domain_tags[:6],
             "abstract": abstract,
             "source_url": paper.get("source_url", "")
+            "source_url": paper.get("source_url", ""),
         }
 
     @classmethod
@@ -316,6 +367,11 @@ Extract and return a valid JSON object matching this exact schema:
         record["source_url"] = paper.get("source_url", "")
 
         for field in ["variables", "evaluation_metrics", "main_findings", "limitations", "future_work", "assumptions", "conflicting_findings"]:
+        for field in [
+            "variables", "evaluation_metrics", "main_findings", "limitations",
+            "future_work", "assumptions", "conflicting_findings",
+            "scientific_entities", "domain_tags",
+        ]:
             val = record.get(field)
             if not isinstance(val, list):
                 record[field] = [str(val)] if val else []

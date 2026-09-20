@@ -58,85 +58,134 @@ class GapValidatorAgent:
 
         supporting = candidate.get("supporting_papers", [])
 
-        # 1. Search corpus for Direct, Adjacent, and Weak Evidence
+        # ── Stage 2-7 pipeline scores ──────────────────────────────────────
+        pipeline_rejections: list = list(candidate.get("pipeline_rejections", []))
+        method_ver = candidate.get("method_verification", {})
+        domain_ver = candidate.get("domain_verification", {})
+        prior_art  = candidate.get("prior_art", {})
+        compatibility = candidate.get("compatibility", {})
+
+        method_evidence_score: float = method_ver.get("method_evidence_score", 0.70)
+        domain_activity_score: float = domain_ver.get("domain_activity_score", 0.70)
+        saturation_score:      float = prior_art.get("saturation_score", 0.00)
+        saturation_verdict:    str   = prior_art.get("saturation_verdict", "OPEN")
+        compatibility_score:   float = compatibility.get("compatibility_score", 0.75)
+        contradiction_class:   str   = candidate.get("contradiction_class", "")
+
+        rejection_reason: str = pipeline_rejections[0] if pipeline_rejections else ""
+        if contradiction_class == "WEAK_CONTRADICTION" and "WEAK_CONTRADICTION" not in pipeline_rejections:
+            pipeline_rejections.append("WEAK_CONTRADICTION")
+
+        # ── Novelty search ─────────────────────────────────────────────────
         novelty_report = cls._verify_novelty_in_corpus(a, b, gap_title, paper_records, embedder)
-        direct_count = novelty_report["direct_count"]
+        direct_count   = novelty_report["direct_count"]
         adjacent_count = novelty_report["adjacent_count"]
 
-        # 2. Adversarial Rejection Filter (4-Tier Scientific Taxonomy)
-        # Tier D: Invalid gap (unsupported, redundant >= 3 direct studies, or incompatible)
-        if direct_count >= 3:
-            status = "Invalid gap"
-            status_desc = "Existing literature directly addresses this topic."
-            why_not = (
-                f"Novelty check failed: {direct_count} papers in the corpus ({', '.join(novelty_report['direct_titles'][:2])}) "
-                f"already directly investigate this exact direction. This does not constitute an unaddressed research gap."
-            )
-            is_valid = False
-        elif direct_count == 2 and candidate.get("signal_source") == "Signal 8: Underexplored Intersection":
-            status = "Invalid gap"
-            status_desc = "Emerging studies already explore this combination; redundancy risk is high."
-            why_not = f"Limited novelty: 2 recent papers directly investigate this intersection."
-            is_valid = False
-        # Tier A: True/strong gap (verified evidence that an important aspect remains insufficiently studied)
-        elif len(supporting) >= 2 and candidate.get("gap_type") != "Underexplored Intersection":
-            status = "True/strong gap"
-            status_desc = "Verified evidence confirms this critical aspect remains insufficiently addressed."
-            why_not = "N/A — Evidence solidly supports this as a legitimate unresolved research gap."
-            is_valid = True
-        # Tier C: Novel intersection (two areas haven't been combined, but deficiency evidence is preliminary)
-        elif candidate.get("gap_type") == "Underexplored Intersection":
-            if direct_count == 0 and adjacent_count >= 2:
-                status = "Novel intersection"
-                status_desc = "Two mature domains haven't been combined, though direct deficiency evidence is preliminary."
-                why_not = "The two components are established in isolation, but literature lacks explicit author statements calling for their combination."
-                is_valid = True
-            else:
-                status = "Potential gap"
-                status_desc = "Preliminary evidence suggests an underexplored avenue."
-                why_not = "Indirect evidence indicates potential, but further survey of adjacent disciplines is advised."
-                is_valid = True
-        # Tier B: Potential gap (limited evidence suggesting something is underexplored)
-        else:
-            status = "Potential gap"
-            status_desc = "Evidence indicates an underexplored direction."
-            why_not = "Support is grounded in preliminary citations; broader confirmation is pending."
-            is_valid = True
+        # ── Continuous scoring (no fixed thresholds) ───────────────────────
+        # Each signal contributes a 0–1 component score
+        evidence_signal     = min(1.0, len(supporting) / 4.0)
+        novelty_signal      = max(0.0, 1.0 - (direct_count / 5.0) - saturation_score * 0.4)
+        method_signal       = method_evidence_score
+        domain_signal       = domain_activity_score
+        compat_signal       = compatibility_score
+        saturation_openness = max(0.0, 1.0 - saturation_score)
 
-        # 3. Compute Calibrated Confidence Percentages
+        # Weighted composite validity score (0–1)
+        validity_score = (
+            evidence_signal     * 0.20 +
+            novelty_signal      * 0.25 +
+            method_signal       * 0.15 +
+            domain_signal       * 0.15 +
+            compat_signal       * 0.15 +
+            saturation_openness * 0.10
+        )
+
+        # Hard rejections from upstream pipeline always win
+        if rejection_reason in ("SPECULATIVE_METHOD", "INACTIVE_DOMAIN", "INCOMPATIBLE", "SATURATED_GAP"):
+            is_valid = False
+            status_map = {
+                "SPECULATIVE_METHOD": ("Invalid gap", "Method is only proposed in future-work; never empirically evaluated."),
+                "INACTIVE_DOMAIN":    ("Invalid gap", "Target domain has no experimental papers in the corpus."),
+                "INCOMPATIBLE":       ("Invalid gap", "Method and domain are technically incompatible."),
+                "SATURATED_GAP":      ("Invalid gap", "Prior-art saturation: ≥5 bridging papers already address this gap."),
+            }
+            status, status_desc = status_map[rejection_reason]
+            why_not = f"Rejected (Stage pipeline — {rejection_reason}): {status_desc}"
+        elif validity_score >= 0.70:
+            is_valid  = True
+            status    = "True/strong gap"
+            status_desc = "High composite evidence: method, domain, novelty, and compatibility all support this gap."
+            why_not   = "N/A — Composite score strongly supports this as a legitimate unresolved research gap."
+        elif validity_score >= 0.50:
+            is_valid  = True
+            status    = "Potential gap"
+            status_desc = "Moderate evidence; gap is plausible but warrants additional validation."
+            why_not   = "Composite score is moderate; one or more dimensions (novelty, method, saturation) require further investigation."
+        elif validity_score >= 0.35:
+            is_valid  = True
+            status    = "Novel intersection"
+            status_desc = "Two mature areas haven't been combined; direct deficiency evidence is preliminary."
+            why_not   = "Components are independently established but explicit combined validation is absent."
+        else:
+            is_valid  = False
+            status    = "Invalid gap"
+            status_desc = "Composite validity score too low across multiple evidence dimensions."
+            why_not   = (
+                f"Validity score {validity_score:.2f} < 0.35. "
+                f"Direct studies: {direct_count}, saturation: {saturation_verdict}, "
+                f"method: {method_ver.get('method_status','?')}, domain: {domain_ver.get('domain_maturity','?')}."
+            )
+
+        # ── Calibrated Confidence ──────────────────────────────────────────
         confidences = cls._calculate_calibrated_confidences(
             status=status,
             supporting_count=len(supporting),
             direct_count=direct_count,
             adjacent_count=adjacent_count,
             signal_type=candidate.get("signal_type", ""),
-            gap_type=candidate.get("gap_type", "")
+            gap_type=candidate.get("gap_type", ""),
+            method_evidence_score=method_evidence_score,
+            domain_activity_score=domain_activity_score,
+            saturation_score=saturation_score,
+            compatibility_score=compatibility_score,
         )
 
         conf_scorecard = {
-            "overall": confidences.get("overall_confidence", 80),
-            "evidence": confidences.get("evidence_confidence", 85),
-            "novelty": confidences.get("novelty_confidence", 85),
-            "feasibility": confidences.get("feasibility_confidence", 75),
-            "relevance": confidences.get("relevance_confidence", 80),
-            "derivation_explanation": confidences.get("derivation", "Corpus literature evaluation")
+            "overall":            confidences.get("overall_confidence", 80),
+            "evidence":           confidences.get("evidence_confidence", 85),
+            "novelty":            confidences.get("novelty_confidence", 85),
+            "feasibility":        confidences.get("feasibility_confidence", 75),
+            "relevance":          confidences.get("relevance_confidence", 80),
+            "validity_score":     round(validity_score * 100),
+            "method_evidence":    round(method_evidence_score * 100),
+            "domain_activity":    round(domain_activity_score * 100),
+            "prior_art_openness": round(saturation_openness * 100),
+            "compatibility":      round(compatibility_score * 100),
+            "derivation_explanation": confidences.get("derivation", "Continuous multi-signal composite scoring"),
         }
-        ratio_str = f"{len(supporting)}/{len(supporting)} papers support this gap" if supporting else "0/0 papers"
+        ratio_str = f"{len(supporting)}/{len(supporting)} papers" if supporting else "0/0 papers"
 
         return {
-            "status": status,
-            "gap_status": status,
-            "status_description": status_desc,
-            "is_valid": is_valid,
-            "why_not_a_gap": why_not,
-            "why_not_gap": why_not,
+            "status":               status,
+            "gap_status":           status,
+            "status_description":   status_desc,
+            "is_valid":             is_valid,
+            "validity_score":       round(validity_score, 3),
+            "rejection_reason":     rejection_reason or None,
+            "why_not_a_gap":        why_not,
+            "why_not_gap":          why_not,
             "direct_studies_count": direct_count,
             "adjacent_studies_count": adjacent_count,
             "novelty_verification": novelty_report,
             "confidence_breakdown": confidences,
             "confidence_scorecard": conf_scorecard,
             "ratio_evidence_string": ratio_str,
-            "evidence_strength": "High" if len(supporting) >= 3 else ("Medium" if len(supporting) >= 2 else "Preliminary")
+            "evidence_strength":    "High" if len(supporting) >= 3 else ("Medium" if len(supporting) >= 2 else "Preliminary"),
+            "pipeline_rejections":  pipeline_rejections,
+            "saturation_verdict":   saturation_verdict,
+            "method_status":        method_ver.get("method_status", "UNKNOWN"),
+            "domain_maturity":      domain_ver.get("domain_maturity", "UNKNOWN"),
+            "compatibility_verdict": compatibility.get("compatibility_verdict", "UNKNOWN"),
         }
 
     @classmethod
@@ -194,44 +243,80 @@ class GapValidatorAgent:
         direct_count: int,
         adjacent_count: int,
         signal_type: str,
-        gap_type: str
+        gap_type: str,
+        method_evidence_score: float = 0.70,
+        domain_activity_score: float = 0.70,
+        saturation_score: float = 0.0,
+        compatibility_score: float = 0.75,
     ) -> Dict[str, Any]:
         """
-        Calculate calibrated confidence percentages instead of arbitrary 5.0/5.0 scores.
-        Evidence: Derived from citation support and direct quotes.
-        Novelty: Inversely related to direct literature saturation.
-        Feasibility: Component maturity and dataset readiness.
-        Relevance: Impact on broader scientific problem.
+        Calculate calibrated confidence percentages.
+
+        New formula incorporates Stage 2-7 pipeline signals:
+          evidence_conf    ← citation support (unchanged)
+          novelty_conf     ← inverse saturation (Stage 5) + direct-study penalty
+          feasibility_conf ← method_evidence × domain_activity × compatibility
+          relevance_conf   ← gap taxonomy significance (unchanged)
+          overall_conf     ← weighted blend of all four pillars
         """
         # Evidence Confidence: 60% base + 12% per citation (capped at 96%)
         evidence_conf = min(96, max(45, 55 + (supporting_count * 12)))
 
-        # Novelty Confidence: penalized heavily if direct papers exist
+        # Novelty Confidence: penalized by direct papers AND prior-art saturation
         if direct_count == 0:
-            novelty_conf = 92
+            base_novelty = 92
         elif direct_count == 1:
-            novelty_conf = 74
+            base_novelty = 74
         elif direct_count == 2:
-            novelty_conf = 48
+            base_novelty = 48
         else:
-            novelty_conf = 20  # Rejected
+            base_novelty = 20
+        # Saturation penalty: subtract up to 30 points for saturated gaps
+        sat_penalty = int(saturation_score * 30)
+        novelty_conf = max(10, base_novelty - sat_penalty)
 
-        # Feasibility Confidence: based on adjacent literature activity
-        feasibility_conf = min(94, max(52, 60 + min(adjacent_count * 4, 30)))
+        # Feasibility Confidence: now driven by pipeline Stage 2 + 3 + 7 scores
+        pipeline_feasibility = int(
+            (method_evidence_score * 0.35 + domain_activity_score * 0.35 + compatibility_score * 0.30) * 100
+        )
+        adjacent_bonus = min(adjacent_count * 4, 20)
+        feasibility_conf = min(96, max(40, pipeline_feasibility + adjacent_bonus))
 
         # Relevance Confidence: based on gap taxonomy significance
         high_relevance_types = {"Evaluation Gap", "Generalization Gap", "Scalability Gap", "Contradiction Gap"}
         relevance_conf = 88 if gap_type in high_relevance_types else 76
 
-        # Overall Confidence
-        if status == "Rejected Gap":
+        # Overall Confidence — new weighted formula
+        if status in ("Invalid gap", "Rejected Gap"):
             overall_conf = 25
-        elif status == "True / Strong Gap":
-            overall_conf = int(round((0.35 * evidence_conf) + (0.30 * novelty_conf) + (0.20 * feasibility_conf) + (0.15 * relevance_conf)))
-        elif status == "Potential Gap":
-            overall_conf = int(round((0.30 * evidence_conf) + (0.35 * novelty_conf) + (0.20 * feasibility_conf) + (0.15 * relevance_conf)))
+        elif status in ("True/strong gap", "True / Strong Gap"):
+            overall_conf = int(round(
+                0.30 * evidence_conf
+                + 0.25 * novelty_conf
+                + 0.25 * feasibility_conf
+                + 0.20 * relevance_conf
+            ))
+        elif status == "Potential gap":
+            overall_conf = int(round(
+                0.25 * evidence_conf
+                + 0.30 * novelty_conf
+                + 0.25 * feasibility_conf
+                + 0.20 * relevance_conf
+            ))
         else:  # Novel Intersection
-            overall_conf = int(round((0.25 * evidence_conf) + (0.45 * novelty_conf) + (0.20 * feasibility_conf) + (0.10 * relevance_conf)))
+            overall_conf = int(round(
+                0.20 * evidence_conf
+                + 0.40 * novelty_conf
+                + 0.25 * feasibility_conf
+                + 0.15 * relevance_conf
+            ))
+
+        derivation = (
+            f"Synthesized from {supporting_count} cited quotes, {direct_count} direct studies, "
+            f"{adjacent_count} adjacent papers; method_evidence={method_evidence_score:.2f}, "
+            f"domain_activity={domain_activity_score:.2f}, saturation={saturation_score:.2f}, "
+            f"compatibility={compatibility_score:.2f}."
+        )
 
         return {
             "overall_confidence": overall_conf,
@@ -239,5 +324,5 @@ class GapValidatorAgent:
             "novelty_confidence": novelty_conf,
             "feasibility_confidence": feasibility_conf,
             "relevance_confidence": relevance_conf,
-            "derivation": f"Synthesized from {supporting_count} cited quotes, {direct_count} direct studies, and {adjacent_count} adjacent papers in corpus."
+            "derivation": derivation,
         }
