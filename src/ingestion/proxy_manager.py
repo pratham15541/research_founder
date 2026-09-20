@@ -5,7 +5,6 @@ during academic literature and full-paper PDF retrieval.
 """
 
 import time
-import random
 import logging
 from pathlib import Path
 from typing import List, Optional
@@ -14,17 +13,15 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-PROXY_HTTP_URL = "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt"
-PROXY_HTTPS_URL = "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/https.txt"
-
 class ProxyManager:
     """Manages pool of rotating free proxies from iplocate/free-proxy-list."""
 
-    def __init__(self, cache_ttl_seconds: int = 1800):  # 30 min refresh
-        self.cache_ttl = cache_ttl_seconds
+    def __init__(self, cache_ttl_seconds: Optional[int] = None):
+        self.cache_ttl = cache_ttl_seconds if cache_ttl_seconds is not None else settings.PROXY_CACHE_TTL_SECONDS
         self.cache_file = settings.CACHE_DIR / "proxies.txt"
         self._proxies: List[str] = []
         self._last_refresh = 0.0
+        self._next_index = 0
 
     async def get_proxies(self, force_refresh: bool = False) -> List[str]:
         """Load proxies from disk cache or fetch updated list from GitHub."""
@@ -47,8 +44,7 @@ class ProxyManager:
                 except Exception as e:
                     logger.warning(f"Error reading proxy cache: {e}")
 
-        # Fetch live from iplocate/free-proxy-list
-        proxies = await self._fetch_proxies_from_github()
+        proxies = await self._fetch_proxies_from_sources()
         if proxies:
             self._proxies = proxies
             self._last_refresh = now
@@ -63,13 +59,14 @@ class ProxyManager:
 
         return self._proxies
 
-    async def _fetch_proxies_from_github(self) -> List[str]:
-        """Download list of working proxies from iplocate/free-proxy-list repository."""
-        logger.info("Fetching updated free proxies from iplocate/free-proxy-list...")
+    async def _fetch_proxies_from_sources(self) -> List[str]:
+        """Download proxy lists from configured sources."""
+        logger.info("Fetching updated proxies from configured sources...")
         all_proxies = set()
+        source_urls = [u.strip() for u in settings.PROXY_SOURCE_URLS.split(",") if u.strip()]
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for url in [PROXY_HTTP_URL, PROXY_HTTPS_URL]:
+            for url in source_urls:
                 try:
                     res = await client.get(url)
                     if res.status_code == 200:
@@ -81,30 +78,36 @@ class ProxyManager:
                 except Exception as e:
                     logger.warning(f"Failed to fetch proxy list from {url}: {e}")
 
-        logger.info(f"Retrieved {len(all_proxies)} unique proxies from iplocate/free-proxy-list")
+        logger.info(f"Retrieved {len(all_proxies)} unique proxies from configured sources")
         return list(all_proxies)
 
-    async def get_random_proxy(self) -> Optional[str]:
-        """Return a random proxy from the available pool."""
-        proxies = await self.get_proxies()
+    async def get_random_proxy(self, force_refresh: bool = False) -> Optional[str]:
+        """Return the next proxy from the available pool."""
+        proxies = await self.get_proxies(force_refresh=force_refresh)
         if not proxies:
             return None
-        return random.choice(proxies)
+        proxy = proxies[self._next_index % len(proxies)]
+        self._next_index += 1
+        return proxy
 
-    async def get_working_client(self, timeout: float = 15.0) -> httpx.AsyncClient:
+    async def get_working_client(
+        self,
+        timeout: float = 15.0,
+        force_refresh: bool = False,
+        headers: Optional[dict] = None
+    ) -> httpx.AsyncClient:
         """
         Produce an httpx AsyncClient configured with a working proxy.
         If proxies fail or are empty, gracefully returns client with direct connection.
         """
-        proxy = await self.get_random_proxy()
+        proxy = await self.get_random_proxy(force_refresh=force_refresh)
         if proxy:
             try:
-                return httpx.AsyncClient(proxy=proxy, timeout=timeout)
+                return httpx.AsyncClient(proxy=proxy, timeout=timeout, headers=headers)
             except Exception as e:
                 logger.warning(f"Could not configure client with proxy {proxy} ({e}). Using direct.")
 
-        return httpx.AsyncClient(timeout=timeout)
+        return httpx.AsyncClient(timeout=timeout, headers=headers)
 
 # Global proxy manager instance
 proxy_manager = ProxyManager()
-

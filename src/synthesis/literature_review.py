@@ -26,10 +26,12 @@ class LiteratureReviewGenerator:
         Produce a structured multi-section academic literature review.
         """
         # Try LLM-assisted synthesis if available
-        if settings.NVIDIA_API_KEY:
+        if settings.DYNAMIC_LLM_ENABLED and settings.NVIDIA_API_KEY:
             llm_review = cls._generate_with_llm(topic_query, papers, clusters, domains, ranked_gaps)
             if llm_review:
                 return llm_review
+        elif settings.LLM_REQUIRED:
+            raise RuntimeError("NVIDIA_API_KEY is required because LLM_REQUIRED=true.")
 
         # Deterministic academic synthesis fallback
         return cls._generate_structured_fallback(topic_query, papers, clusters, domains, ranked_gaps)
@@ -79,7 +81,7 @@ Format the output clearly with markdown subheadings (##, ###) and formal academi
 """
         try:
             from src.llm.nvidia_client import NvidiaClient
-            review_text = NvidiaClient.generate(prompt=prompt, temperature=0.25, max_tokens=3000)
+            review_text = NvidiaClient.generate(prompt=prompt, temperature=settings.LLM_STRUCTURED_TEMPERATURE, max_tokens=3000)
             if review_text and len(review_text.strip()) > 100:
                 return {
                     "topic": topic,

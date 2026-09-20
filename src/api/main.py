@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -19,6 +19,7 @@ from sqlalchemy import select
 from src.config import settings
 from src.storage.db import get_db_session, init_db
 from src.storage.models import AnalysisRun, GapResult, Paper
+from src.storage.file_storage import get_file_storage_backend
 from src.ingestion.pdf_parser import AcademicPDFParser
 from src.ingestion.proxy_manager import proxy_manager
 from src.workflow import ResearchWorkflowRunner
@@ -66,7 +67,6 @@ class AnalyzeRequest(BaseModel):
     topic_query: str = Field(..., json_schema_extra={"example": "Physics-Informed Neural Networks"})
     target_corpus_size: int = Field(default=60, ge=20, le=250)
     expanded_queries: Optional[List[str]] = None
-    predefined_axis_b: Optional[List[str]] = None
     clustering_algorithm: Optional[str] = Field(default="auto", json_schema_extra={"example": "auto"})
 
 class ChatRequest(BaseModel):
@@ -90,6 +90,16 @@ class HealthResponse(BaseModel):
     service: str
     proxy_pool_size: int
 
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root access to interactive documentation."""
+    return RedirectResponse(url="/docs", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Return 204 No Content for browser favicon requests to avoid 404 console noise."""
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint confirming API and proxy pool operational status."""
@@ -111,22 +121,32 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     file_id = str(uuid.uuid4())
-    dest_path = settings.UPLOAD_DIR / f"{file_id}.pdf"
 
     content = await file.read()
     if len(content) > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"File exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_MB}MB.")
 
-    with open(dest_path, "wb") as f:
-        f.write(content)
+    if not AcademicPDFParser.validate_pdf_bytes(content):
+        raise HTTPException(status_code=400, detail="Invalid PDF header.")
 
-    if not AcademicPDFParser.validate_pdf_file(dest_path):
-        dest_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="Invalid PDF format or corrupted file header.")
+    try:
+        stored = get_file_storage_backend().save_bytes(
+            content=content,
+            filename=file.filename,
+            content_type=file.content_type or "application/pdf",
+            file_id=file_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store PDF: {e}")
+
+    validation = AcademicPDFParser.inspect_pdf_file(stored.local_path)
+    if not validation["is_valid"]:
+        stored.local_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Invalid or corrupted PDF: {validation['reason']}")
 
     # Parse sections
     try:
-        parsed_doc = AcademicPDFParser.parse_pdf(dest_path)
+        parsed_doc = AcademicPDFParser.parse_pdf(stored.local_path)
         future_seeds = AcademicPDFParser.extract_explicit_future_work_statements(parsed_doc.get("sections", {}))
         return {
             "file_id": file_id,
@@ -134,10 +154,13 @@ async def upload_pdf(file: UploadFile = File(...)):
             "title": parsed_doc.get("title"),
             "sections_detected": list(parsed_doc.get("sections", {}).keys()),
             "future_work_statements": future_seeds,
-            "local_path": str(dest_path)
+            "local_path": str(stored.local_path),
+            "storage_backend": stored.backend,
+            "storage_uri": stored.uri,
+            "pdf_validation": validation
         }
     except Exception as e:
-        dest_path.unlink(missing_ok=True)
+        stored.local_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Failed to parse PDF layout: {e}")
 
 @app.post("/api/analyze")
@@ -155,7 +178,6 @@ async def analyze_topic(
             session=session,
             topic_query=req.topic_query,
             expanded_queries=req.expanded_queries,
-            axis_b_predefined=req.predefined_axis_b,
             target_corpus_size=req.target_corpus_size,
             clustering_algorithm=req.clustering_algorithm or "auto"
         )
@@ -231,7 +253,19 @@ async def get_proxy_status():
     return {
         "total_active_proxies": len(proxies),
         "sample_proxy": sample,
-        "source": "iplocate/free-proxy-list"
+        "source": settings.PROXY_SOURCE_URLS
+    }
+
+@app.post("/api/proxies/refresh")
+async def refresh_proxy_pool():
+    """Force-refresh the proxy cache from configured proxy source URLs."""
+    proxies = await proxy_manager.get_proxies(force_refresh=True)
+    sample = await proxy_manager.get_random_proxy()
+    return {
+        "total_active_proxies": len(proxies),
+        "sample_proxy": sample,
+        "source": settings.PROXY_SOURCE_URLS,
+        "refreshed": True
     }
 
 @app.post("/api/chat")
@@ -347,4 +381,3 @@ async def export_analysis_report(req: ExportRequest):
         )
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format '{req.format}'. Choose 'markdown', 'latex', or 'html'.")
-

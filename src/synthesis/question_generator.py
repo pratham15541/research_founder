@@ -20,10 +20,12 @@ class ResearchQuestionGenerator:
         gap: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Generate formal hypotheses and experimental variable protocols for a gap."""
-        if settings.NVIDIA_API_KEY:
+        if settings.DYNAMIC_LLM_ENABLED and settings.NVIDIA_API_KEY:
             llm_questions = cls._generate_with_llm(gap)
             if llm_questions:
                 return llm_questions
+        elif settings.LLM_REQUIRED:
+            raise RuntimeError("NVIDIA_API_KEY is required because LLM_REQUIRED=true.")
 
         return cls._generate_fallback(gap)
 
@@ -62,7 +64,7 @@ Formulate a rigorous research protocol and return a JSON object matching this ex
 """
         try:
             from src.llm.nvidia_client import NvidiaClient
-            data = NvidiaClient.generate_json(prompt=prompt, temperature=0.25, max_tokens=1024)
+            data = NvidiaClient.generate_json(prompt=prompt, temperature=settings.LLM_STRUCTURED_TEMPERATURE, max_tokens=1024)
             if data and isinstance(data, dict):
                 if "primary_research_question" in data and "primary_hypothesis_h1" in data:
                     return data
@@ -94,4 +96,3 @@ Formulate a rigorous research protocol and return a JSON object matching this ex
             ],
             "expected_contributions": f"First systematic empirical study demonstrating the cross-domain viability of {a} in {b} with open-source benchmark reproduction code."
         }
-

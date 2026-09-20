@@ -75,8 +75,10 @@ class RAGEngine:
 
         # Attempt LLM generation via NVIDIA API
         answer = None
-        if settings.NVIDIA_API_KEY:
+        if settings.DYNAMIC_LLM_ENABLED and settings.NVIDIA_API_KEY:
             answer = cls._generate_with_llm(user_query, context_str)
+        elif settings.LLM_REQUIRED:
+            raise RuntimeError("NVIDIA_API_KEY is required because LLM_REQUIRED=true.")
 
         if not answer:
             answer = cls._generate_fallback(user_query, retrieved_chunks)
@@ -106,7 +108,7 @@ USER RESEARCH QUESTION:
 Synthesize a clear, authoritative, and structured scientific answer:
 """
         try:
-            return NvidiaClient.generate(prompt=prompt, temperature=0.2, max_tokens=2048)
+            return NvidiaClient.generate(prompt=prompt, temperature=settings.LLM_STRUCTURED_TEMPERATURE, max_tokens=2048)
         except Exception as e:
             logger.warning(f"RAG NVIDIA LLM generation failed: {e}. Falling back to structured synthesis.")
             return None
@@ -129,4 +131,3 @@ Synthesize a clear, authoritative, and structured scientific answer:
             "These findings highlight how current literature addresses this topic across the indexed publications."
         )
         return "\n".join(synthesis_lines)
-

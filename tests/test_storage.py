@@ -8,6 +8,8 @@ import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from src.storage.models import Base, Paper
 from src.storage.cache import CompoundingCacheEngine, normalize_title
+from src.config import settings
+from src.storage.file_storage import LocalFileStorageBackend, get_file_storage_backend
 
 @pytest.fixture
 async def async_session():
@@ -91,3 +93,15 @@ async def test_compounding_cache_deduplication(async_session):
     assert len(to_insert_2) == 1
     assert to_insert_2[0]["doi"] == "10.1234/test.doi.3"
 
+def test_s3_backend_falls_back_to_local_when_endpoint_unavailable(monkeypatch):
+    class BrokenS3Backend:
+        def __init__(self):
+            raise RuntimeError("Could not connect to the endpoint URL")
+
+    monkeypatch.setattr(settings, "STORAGE_BACKEND", "s3")
+    monkeypatch.setattr(settings, "STORAGE_FALLBACK_TO_LOCAL", True)
+    monkeypatch.setattr("src.storage.file_storage.S3FileStorageBackend", BrokenS3Backend)
+
+    backend = get_file_storage_backend()
+
+    assert isinstance(backend, LocalFileStorageBackend)

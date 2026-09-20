@@ -48,3 +48,23 @@ def test_resolve_official_pdf_url():
     }
     assert FullPaperDownloader.resolve_official_pdf_url(paper_direct) == "https://research.org/downloads/paper.pdf"
 
+@pytest.mark.asyncio
+async def test_resolve_pdf_candidates_adds_doi_fallback(monkeypatch):
+    async def fake_unpaywall(doi: str):
+        assert doi == "10.1038/s41586-020-2649-2"
+        return "https://repository.example.org/paper.pdf"
+
+    monkeypatch.setattr(FullPaperDownloader, "_resolve_via_unpaywall", staticmethod(fake_unpaywall))
+    paper = {
+        "source": "publisher",
+        "source_url": "https://www.nature.com/articles/s41586-020-2649-2.pdf",
+        "doi": "10.1038/s41586-020-2649-2",
+        "pdf_url": "https://www.nature.com/articles/s41586-020-2649-2.pdf",
+    }
+
+    candidates = await FullPaperDownloader._resolve_pdf_candidates(paper)
+
+    assert candidates == [
+        "https://www.nature.com/articles/s41586-020-2649-2.pdf",
+        "https://repository.example.org/paper.pdf",
+    ]

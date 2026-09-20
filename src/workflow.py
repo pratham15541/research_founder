@@ -1,8 +1,14 @@
 """
 Master Research Discovery Workflow.
-Coordinates the end-to-end pipeline from query expansion and hybrid retrieval to
-unsupervised dimension discovery, deterministic 2D matrix aggregation,
-and grounded ranking with devil's advocate critique.
+Coordinates the end-to-end evidence-grounded pipeline:
+  1. Hybrid retrieval & compounding corpus caching
+  2. Unsupervised dimension discovery (Axis A / Axis B)
+  3. Structured 15-dimension knowledge extraction per paper
+  4. Literature Evidence Graph construction
+  5. Multi-signal gap mining (repeated limitations, future directions, contradictions)
+  6. 15-category gap taxonomy candidate generation
+  7. Adversarial novelty verification & 5-pillar Devil's Advocate reality check
+  8. Calibrated confidence scoring and grounded experimental protocol formulation
 """
 
 import asyncio
@@ -21,6 +27,9 @@ from src.representation.labeling import ClusterLabelingEngine
 from src.representation.domain_discovery import DomainDiscoveryEngine
 from src.matrix.aggregator import CombinatorialMatrixAggregator
 from src.matrix.gap_filter import CandidateGapFilter
+from src.matrix.candidate_generator import MultiSignalGapGenerator
+from src.extraction.paper_extractor import AcademicPaperExtractor
+from src.graph.evidence_graph import LiteratureEvidenceGraphBuilder
 from src.ranking.ranker import GroundedGapRanker
 from src.graph.knowledge_graph import KnowledgeGraphBuilder
 from src.storage.cache import CompoundingCacheEngine
@@ -29,11 +38,17 @@ from src.rag.faiss_index import FAISSVectorIndex
 from src.synthesis.literature_review import LiteratureReviewGenerator
 from src.synthesis.question_generator import ResearchQuestionGenerator
 from src.evaluation.metrics import EvaluationMetricsEngine
+# ── New 9-stage evidence pipeline ────────────────────────────────────────────
+from src.pipeline.methodological_verifier import MethodologicalVerifier
+from src.pipeline.domain_verifier import DomainVerifier
+from src.pipeline.prior_art_checker import PriorArtChecker
+from src.pipeline.compatibility_reasoner import CompatibilityReasoner
 
 logger = logging.getLogger(__name__)
 
+
 class ResearchWorkflowRunner:
-    """End-to-end orchestrator for research landscape mapping and gap discovery."""
+    """End-to-end orchestrator for evidence-backed research landscape mapping and gap discovery."""
 
     def __init__(self):
         self.ingestion = HybridIngestionEngine()
@@ -46,12 +61,11 @@ class ResearchWorkflowRunner:
         topic_query: str,
         expanded_queries: Optional[List[str]] = None,
         uploaded_pdf_paths: Optional[List[Path]] = None,
-        axis_b_predefined: Optional[List[str]] = None,
         target_corpus_size: int = 120,
         clustering_algorithm: str = "auto"
     ) -> Dict[str, Any]:
-        """Execute the full 10-step research discovery pipeline."""
-        queries = expanded_queries or [topic_query, f"{topic_query} methods", f"{topic_query} applications"]
+        """Execute the full multi-signal research gap discovery pipeline."""
+        queries = expanded_queries or self._expand_queries(topic_query)
 
         # Step 1 & 2: Hybrid Ingestion & Compounding DB Cache
         corpus_papers = await self.ingestion.ingest_topic_corpus(
@@ -91,35 +105,34 @@ class ResearchWorkflowRunner:
             p["axis_a_tag"] = cluster_info[cid]["label"]
             p["tag_confidence"] = "high" if cid != -1 else "medium"
 
-        # Define Axis B (Domain / Application or Predefined buckets)
-        # Step 5b: Dynamic Unsupervised Discovery of Axis B (Application Domains & Problem Settings)
-        if not axis_b_predefined:
-            axis_b_labels = [
-                "Healthcare & Clinical",
-                "Autonomous Robotics",
-                "Low-Power Edge Systems",
-                "Finance & Economics",
-                "Scientific Discovery"
-            ]
-            axis_b_labels = DomainDiscoveryEngine.discover_domains(
-                topic_query=topic_query,
-                papers=paper_dicts,
-                embedder=self.embedder,
-                num_domains=5
-            )
-        else:
-            axis_b_labels = axis_b_predefined
+        # Define Axis B dynamically from retrieved papers (silhouette-optimal count)
+        axis_b_labels = DomainDiscoveryEngine.discover_domains(
+            topic_query=topic_query,
+            papers=paper_dicts,
+            embedder=self.embedder,
+            num_domains=None
+        )
 
-        # Tag Axis B (Rule-based / Keyword classification for demonstration)
-        self._tag_axis_b(paper_dicts, axis_b_labels)
-        # Tag Axis B dynamically using embedding cosine similarity
+        # Tag Axis B dynamically
         DomainDiscoveryEngine.tag_papers_with_domains(
             papers=paper_dicts,
             domains=axis_b_labels,
             embedder=self.embedder
         )
 
-        # Step 6: Deterministic 2D Matrix Aggregation
+        # Step 6: Structured 15-Dimension + 3-Field Knowledge Extraction per Paper
+        logger.info("Stage 1 — Extracting structured research dimensions + scientific entities from %d papers...", len(paper_dicts))
+        structured_records = AcademicPaperExtractor.extract_corpus_records(paper_dicts)
+
+        # Step 7: Literature Evidence Graph & Signal Mining (Stage 4 — with semantic clustering)
+        logger.info("Stage 4 — Building evidence graph (with entity + domain edges) and mining signals...")
+        evidence_graph = LiteratureEvidenceGraphBuilder.build_evidence_graph(structured_records)
+        evidence_graph_html = LiteratureEvidenceGraphBuilder.export_pyvis_evidence_graph_html(evidence_graph)
+        limitation_clusters = LiteratureEvidenceGraphBuilder.mine_repeated_limitations(structured_records, embedder=self.embedder)
+        future_work_clusters = LiteratureEvidenceGraphBuilder.mine_recurring_future_work(structured_records, embedder=self.embedder)
+        contradictions = LiteratureEvidenceGraphBuilder.mine_contradictions(structured_records)
+
+        # Step 8: 2D Matrix Aggregation (Preserved for Landscape Visualization)
         matrix_result = CombinatorialMatrixAggregator.aggregate_matrix(
             papers=paper_dicts,
             axis_a_labels=axis_a_labels,
@@ -127,13 +140,42 @@ class ResearchWorkflowRunner:
             sparsity_percentage=settings.SPARSITY_PERCENTAGE
         )
 
-        # Step 7: Candidate Gap Filtering (Adjacency + Sparsity)
-        candidate_gaps = CandidateGapFilter.filter_candidate_gaps(
+        # Step 9: Multi-Signal Gap Candidate Generation (8 Signals across 15 Taxonomy Categories)
+        # Step 9a: Multi-Signal Gap Candidate Generation (8 Signals across 15 Taxonomy Categories)
+        logger.info("Generating multi-signal gap candidates...")
+        candidate_gaps = MultiSignalGapGenerator.generate_candidates(
+            paper_records=structured_records,
+            limitation_clusters=limitation_clusters,
+            future_work_clusters=future_work_clusters,
+            contradictions=contradictions,
             matrix_result=matrix_result,
-            dense_multiplier=3
+            max_candidates=15
         )
 
-        # Extract any future work seeds from uploaded PDFs
+        # ── NEW: Stage 2 — Methodological Verification ──────────────────────
+        logger.info("Stage 2 — Methodological verification for %d candidates...", len(candidate_gaps))
+        candidate_gaps = MethodologicalVerifier.verify_corpus(candidate_gaps, structured_records)
+
+        # ── NEW: Stage 3 — Domain Verification ─────────────────────────────
+        logger.info("Stage 3 — Domain activity verification...")
+        candidate_gaps = DomainVerifier.verify_corpus(candidate_gaps, structured_records)
+
+        # ── NEW: Stage 5 — Prior-Art Saturation Check ────────────────────
+        logger.info("Stage 5 — Prior-art saturation check (graph walk)...")
+        candidate_gaps = PriorArtChecker.check_corpus(candidate_gaps, evidence_graph, structured_records)
+
+        # ── NEW: Stage 7 — Compatibility Reasoning ───────────────────────
+        logger.info("Stage 7 — Compatibility reasoning (method × domain)...")
+        candidate_gaps = CompatibilityReasoner.reason_corpus(candidate_gaps, structured_records)
+
+        # Log pipeline rejection summary
+        total_rejected = sum(1 for c in candidate_gaps if c.get("pipeline_rejections"))
+        logger.info(
+            "Pipeline verification complete: %d/%d candidates have rejections.",
+            total_rejected, len(candidate_gaps)
+        )
+
+        # Extract future work seeds from uploaded PDFs if any
         future_work_seeds: List[str] = []
         if uploaded_pdf_paths:
             for pdf_path in uploaded_pdf_paths:
@@ -144,23 +186,25 @@ class ResearchWorkflowRunner:
                 except Exception:
                     pass
 
-        # Step 8: Feasibility Estimation, Grounded Ranking & Adversarial Self-Critique
+        # Step 10: Adversarial Novelty Verification, 5-Pillar Challenge & Calibrated Ranking
         ranked_gaps = GroundedGapRanker.rank_candidate_gaps(
             candidate_gaps=candidate_gaps,
             matrix_result=matrix_result,
             future_work_seeds=future_work_seeds,
+            paper_records=structured_records,
+            embedder=self.embedder,
             top_k=5
         )
 
-        # Step 9 & 10: Knowledge Graph Generation
-        graph = KnowledgeGraphBuilder.build_graph(
+        # Step 11: Paper Citation Knowledge Graph Generation
+        paper_graph = KnowledgeGraphBuilder.build_graph(
             papers=paper_dicts,
             embeddings=embeddings,
             similarity_threshold=0.65
         )
-        graph_html = KnowledgeGraphBuilder.export_pyvis_html(graph)
+        paper_graph_html = KnowledgeGraphBuilder.export_pyvis_html(paper_graph)
 
-        # Step 11: Chunk corpus and index in FAISS vector store
+        # Step 12: Chunk corpus and index in FAISS vector store
         chunks = AcademicChunker.chunk_corpus(paper_dicts)
         self.faiss_index.clear()
         if chunks:
@@ -168,13 +212,15 @@ class ResearchWorkflowRunner:
             chunk_embs = self.embedder.embed_texts(chunk_texts)
             self.faiss_index.add_chunks(chunks, chunk_embs)
 
-        # Step 12: Quantitative Evaluation Metrics
+        # Step 13: Quantitative Evaluation Metrics
         topic_terms_list = [cinfo.get("key_terms", []) for cinfo in cluster_info.values()]
         topic_diversity = EvaluationMetricsEngine.calculate_topic_diversity(topic_terms_list)
         topic_coherence = EvaluationMetricsEngine.calculate_topic_coherence(topic_terms_list, self.embedder)
         retrieval_eval = EvaluationMetricsEngine.calculate_retrieval_metrics(topic_query, paper_dicts)
+        full_text_papers = [p for p in paper_dicts if p.get("full_text_available")]
+        downloaded_pdf_papers = [p for p in paper_dicts if p.get("pdf_local_path")]
 
-        # Step 13: Literature Review Synthesis
+        # Step 14: Literature Review Synthesis
         lit_review = LiteratureReviewGenerator.generate_review(
             topic_query=topic_query,
             papers=paper_dicts,
@@ -183,14 +229,22 @@ class ResearchWorkflowRunner:
             ranked_gaps=ranked_gaps
         )
 
-        # Step 14: Evidence-Grounded Research Questions
+        # Step 15: Formal Research Questions & Experimental Protocols
         research_questions = [
             ResearchQuestionGenerator.generate_questions_for_gap(g)
             for g in ranked_gaps[:3]
         ]
 
+        # Count pipeline rejections per stage for reporting
+        stage_rejections = {"SPECULATIVE_METHOD": 0, "INACTIVE_DOMAIN": 0,
+                            "SATURATED_GAP": 0, "INCOMPATIBLE": 0, "WEAK_CONTRADICTION": 0}
+        for c in candidate_gaps:
+            for r in c.get("pipeline_rejections", []):
+                stage_rejections[r] = stage_rejections.get(r, 0) + 1
+
         return {
             "topic_query": topic_query,
+            "expanded_queries": queries,
             "corpus_size": int(len(paper_dicts)),
             "silhouette_score": float(round(sil_score, 3)),
             "cluster_method": cluster_method,
@@ -198,13 +252,28 @@ class ResearchWorkflowRunner:
             "matrix": matrix_result,
             "candidate_gaps_count": int(len(candidate_gaps)),
             "ranked_gaps": ranked_gaps,
-            "graph_summary": {
-                "nodes": int(graph.number_of_nodes()),
-                "edges": int(graph.number_of_edges())
+            "structured_records": structured_records,
+            "limitation_clusters": limitation_clusters,
+            "future_work_clusters": future_work_clusters,
+            "contradictions": contradictions,
+            "evidence_graph_summary": {
+                "nodes": int(evidence_graph.number_of_nodes()),
+                "edges": int(evidence_graph.number_of_edges())
             },
-            "graph_html": graph_html,
+            "evidence_graph_html": evidence_graph_html,
+            "graph_summary": {
+                "nodes": int(paper_graph.number_of_nodes()),
+                "edges": int(paper_graph.number_of_edges())
+            },
+            "graph_html": paper_graph_html,
             "papers": paper_dicts,
             "chunks_count": len(chunks),
+            "pdf_enrichment": {
+                "full_text_available_count": len(full_text_papers),
+                "pdf_stored_count": len(downloaded_pdf_papers),
+                "download_enabled": settings.ENABLE_FULL_TEXT_DOWNLOAD,
+                "download_limit": settings.FULL_TEXT_DOWNLOAD_LIMIT
+            },
             "evaluation_metrics": {
                 "silhouette_score": float(round(sil_score, 3)),
                 "topic_coherence": topic_coherence,
@@ -212,32 +281,53 @@ class ResearchWorkflowRunner:
                 "retrieval": retrieval_eval
             },
             "literature_review": lit_review,
-            "research_questions": research_questions
+            "research_questions": research_questions,
+            "pipeline_verification_summary": {
+                "total_candidates": len(candidate_gaps),
+                "stage_rejections": stage_rejections,
+                "total_rejected": sum(stage_rejections.values()),
+                "stages_run": ["Stage1_EntityExtraction", "Stage2_MethodVerification",
+                               "Stage3_DomainVerification", "Stage4_EvidenceGraph",
+                               "Stage5_PriorArtSaturation", "Stage6_ContradictionVerification",
+                               "Stage7_CompatibilityReasoning", "Stage8_GapScoring"],
+            },
         }
 
     @staticmethod
-    def _tag_axis_b(papers: List[Dict[str, Any]], axis_b_labels: List[str]) -> None:
-        """Categorize papers along Axis B using keyword heuristics or round-robin for balanced spread."""
-        domain_keywords = {
-            "Healthcare & Clinical": ["medical", "health", "clinical", "patient", "disease", "hospital", "cancer", "biomedical"],
-            "Autonomous Robotics": ["robot", "autonomous", "vehicle", "navigation", "motion", "drone", "sensor", "slam"],
-            "Low-Power Edge Systems": ["edge", "embedded", "low-power", "mobile", "fpga", "quantization", "latency", "hardware"],
-            "Finance & Economics": ["market", "trading", "financial", "stock", "portfolio", "risk", "crypto", "price"],
-            "Scientific Discovery": ["physics", "chemistry", "material", "climate", "molecule", "biology", "simulation", "earth"]
-        }
+    def _expand_queries(topic_query: str) -> List[str]:
+        """Expand user topic into diverse academic retrieval queries."""
+        if settings.DYNAMIC_LLM_ENABLED and settings.NVIDIA_API_KEY:
+            prompt = f"""You are designing a literature search for a research-gap discovery agent.
+Given the topic: "{topic_query}"
 
-        for idx, p in enumerate(papers):
-            text = f"{p.get('title', '')} {p.get('abstract', '')}".lower()
-            matched_b = None
-            for b_label in axis_b_labels:
-                kws = domain_keywords.get(b_label, [])
-                if any(kw in text for kw in kws):
-                    matched_b = b_label
-                    break
+Return a JSON list of 5 concise search queries that cover methods, applications, benchmarks, limitations, and emerging directions.
+Each query must be 3 to 9 words and must remain tightly relevant to the topic."""
+            try:
+                from src.llm.nvidia_client import NvidiaClient
+                parsed = NvidiaClient.generate_json(
+                    prompt=prompt,
+                    temperature=settings.LLM_STRUCTURED_TEMPERATURE,
+                    max_tokens=768,
+                    timeout=getattr(settings, "LLM_TIMEOUT_SECONDS", 35.0)
+                )
+                if isinstance(parsed, list):
+                    cleaned = []
+                    for item in parsed:
+                        q = str(item).strip()
+                        if q and q.lower() not in {x.lower() for x in cleaned}:
+                            cleaned.append(q)
+                    if cleaned:
+                        return [topic_query] + cleaned[:5]
+            except Exception as exc:
+                logger.warning("LLM query expansion failed: %s, using multi-dimensional heuristic expansion.", exc)
+        elif settings.LLM_REQUIRED:
+            raise RuntimeError("NVIDIA_API_KEY is required for query expansion because LLM_REQUIRED=true.")
 
-            # If no keyword match, assign deterministically based on index hash for spread
-            if not matched_b:
-                matched_b = axis_b_labels[idx % len(axis_b_labels)]
-
-            p["axis_b_tag"] = matched_b
-
+        # Robust heuristic expansion covering methods, limitations, benchmarks, and comparisons
+        return [
+            topic_query,
+            f"{topic_query} limitations",
+            f"{topic_query} benchmark evaluation",
+            f"{topic_query} architectures methods",
+            f"{topic_query} comparative study"
+        ]

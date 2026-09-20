@@ -5,6 +5,7 @@ Aggregates paper classifications across two orthogonal dimensions without LLM ha
 
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict
+from datetime import datetime, timezone
 import numpy as np
 
 class CombinatorialMatrixAggregator:
@@ -26,7 +27,7 @@ class CombinatorialMatrixAggregator:
         grid: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
         low_confidence_grid: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
 
-        current_year = 2024
+        current_year = datetime.now(timezone.utc).year
         for p in papers:
             a_val = p.get("axis_a_tag")
             b_val = p.get("axis_b_tag")
@@ -81,4 +82,3 @@ class CombinatorialMatrixAggregator:
             "density_table": density_table,
             "cells": matrix_cells
         }
-

@@ -33,14 +33,13 @@ class DimensionDiscoveryEngine:
                 n_neighbors=min(15, n_samples - 1),
                 min_dist=0.1,
                 metric="cosine",
-                random_state=42,
                 n_jobs=1
             )
             return reducer.fit_transform(embeddings)
         except Exception as e:
             logger.warning(f"UMAP not available or failed ({e}). Falling back to PCA.")
             from sklearn.decomposition import PCA
-            pca = PCA(n_components=min(target_dims, n_samples - 1), random_state=42)
+            pca = PCA(n_components=min(target_dims, n_samples - 1))
             return pca.fit_transform(embeddings)
 
     @classmethod
@@ -128,7 +127,7 @@ class DimensionDiscoveryEngine:
         best_labels = np.zeros(n_samples, dtype=int)
 
         for k in range(min_k, max_k + 1):
-            km = KMeans(n_clusters=k, random_state=42, n_init=10)
+            km = KMeans(n_clusters=k, n_init=10)
             candidate_labels = km.fit_predict(reduced)
             try:
                 score = float(silhouette_score(reduced, candidate_labels))

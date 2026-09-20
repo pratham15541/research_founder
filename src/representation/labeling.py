@@ -6,6 +6,7 @@ with TF-IDF n-gram extraction as offline fallback.
 
 import json
 import logging
+import re
 from typing import List, Dict, Any, Optional
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -78,7 +79,11 @@ class ClusterLabelingEngine:
     @classmethod
     def _label_with_llm(cls, rep_papers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Query NVIDIA AI API for a standardized 2-4 word taxonomy label."""
+        if not settings.DYNAMIC_LLM_ENABLED:
+            return None
         if not settings.NVIDIA_API_KEY:
+            if settings.LLM_REQUIRED:
+                raise RuntimeError("NVIDIA_API_KEY is required because LLM_REQUIRED=true.")
             return None
 
         paper_summaries = "\n".join([
@@ -100,7 +105,11 @@ Respond ONLY with valid JSON in this exact structure:
 """
         try:
             from src.llm.nvidia_client import NvidiaClient
-            parsed = NvidiaClient.generate_json(prompt=prompt, temperature=0.2, max_tokens=1024)
+            parsed = NvidiaClient.generate_json(
+                prompt=prompt,
+                temperature=settings.LLM_STRUCTURED_TEMPERATURE,
+                max_tokens=1024
+            )
             if parsed and isinstance(parsed, dict) and "label" in parsed and "short_description" in parsed:
                 return parsed
         except Exception as e:
@@ -143,17 +152,34 @@ Respond ONLY with valid JSON in this exact structure:
             elif top_terms:
                 label = f"{top_terms[0]} Modeling"
             else:
-                label = "Theoretical Methodology"
+                label = cls._label_from_titles(cluster_papers)
 
             return {
                 "label": label,
-                "short_description": f"Focuses on methodologies involving {', '.join(top_terms[:3])}.",
-                "key_terms": top_terms[:4]
+                "short_description": f"Corpus-derived theme from terms: {', '.join(top_terms[:3]) or label}.",
+                "key_terms": top_terms[:4] or label.split()[:4]
             }
         except Exception:
+            label = cls._label_from_titles(cluster_papers)
             return {
-                "label": "Scientific Methodology",
-                "short_description": "Aggregated cluster of related foundational methods.",
-                "key_terms": ["Methods", "Theory", "Applications"]
+                "label": label,
+                "short_description": f"Corpus-derived theme inferred from representative titles: {label}.",
+                "key_terms": label.split()[:4]
             }
 
+    @staticmethod
+    def _label_from_titles(cluster_papers: List[Dict[str, Any]]) -> str:
+        """Create a label from words repeated in this cluster's paper titles."""
+        text = " ".join(p.get("title", "") for p in cluster_papers)
+        tokens = [
+            t.title()
+            for t in re.findall(r"[A-Za-z][A-Za-z\-]{3,}", text)
+            if t.lower() not in {"using", "based", "with", "from", "paper", "study", "analysis", "model", "models"}
+        ]
+        seen: List[str] = []
+        for token in tokens:
+            if token not in seen:
+                seen.append(token)
+            if len(seen) == 3:
+                break
+        return " ".join(seen) if seen else "Corpus Derived Theme"
