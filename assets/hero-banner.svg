@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 250" width="100%" height="100%">
+  <defs>
+    <!-- Light & Dark Theme Variables -->
+    <style>
+      :root {
+        --bg: #ffffff;
+        --border: #d0d7de;
+        --card-bg: #f6f8fa;
+        --card-border: #d0d7de;
+        --text-title: #1f2328;
+        --text-body: #656d76;
+        --text-sub: #8c959f;
+        --accent-blue: #0969da;
+        --accent-purple: #8250df;
+        --accent-emerald: #1a7f37;
+        --accent-amber: #bf8700;
+        --wire-base: #d0d7de;
+        --wire-active: #0969da;
+        --tag-bg: #ddf4ff;
+        --tag-text: #0969da;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1117;
+          --border: #30363d;
+          --card-bg: #161b22;
+          --card-border: #30363d;
+          --text-title: #f0f6fc;
+          --text-body: #8b949e;
+          --text-sub: #6e7681;
+          --accent-blue: #38bdf8;
+          --accent-purple: #a855f7;
+          --accent-emerald: #34d399;
+          --accent-amber: #fbbf24;
+          --wire-base: #30363d;
+          --wire-active: #38bdf8;
+          --tag-bg: #0c2d6b;
+          --tag-text: #79c0ff;
+        }
+      }
+
+      /* 3-Second Loop CSS Animations */
+      @keyframes pulseGlow {
+        0%, 100% { opacity: 0.4; }
+        50% { opacity: 1; }
+      }
+      @keyframes flowDash {
+        0% { stroke-dashoffset: 40; }
+        100% { stroke-dashoffset: 0; }
+      }
+      @keyframes packetTravel {
+        0% { offset-distance: 0%; opacity: 0; }
+        15% { opacity: 1; }
+        85% { opacity: 1; }
+        100% { offset-distance: 100%; opacity: 0; }
+      }
+      @keyframes badgeBlink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+
+      .pulse-indicator { animation: badgeBlink 2.5s ease-in-out infinite; }
+      .wire-pulse { stroke-dasharray: 6 6; animation: flowDash 2.5s linear infinite; }
+      .card-box { transition: all 0.3s ease; }
+
+      text {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      }
+    </style>
+  </defs>
+
+  <!-- Outer Container -->
+  <rect width="960" height="250" rx="12" fill="var(--bg)" stroke="var(--border)" stroke-width="1.5"/>
+
+  <!-- Top Title Header -->
+  <g transform="translate(30, 22)">
+    <!-- Active Status Badge -->
+    <rect x="0" y="0" width="160" height="24" rx="12" fill="var(--tag-bg)"/>
+    <circle cx="12" cy="12" r="4.5" fill="var(--accent-emerald)" class="pulse-indicator"/>
+    <text x="23" y="16" fill="var(--tag-text)" font-size="10.5" font-weight="700" letter-spacing="0.5">AUTONOMOUS PIPELINE</text>
+
+    <!-- Main Title -->
+    <text x="0" y="44" fill="var(--text-title)" font-size="19" font-weight="800">
+      ResearchGapAI <tspan fill="var(--accent-blue)">Intelligence Pipeline</tspan>
+    </text>
+    
+    <!-- Subtitle -->
+    <text x="400" y="44" fill="var(--text-body)" font-size="12">
+      From Heterogeneous Academic Literature to Validated, Calibrated Research Gap Dossiers
+    </text>
+  </g>
+
+  <!-- Connecting Wires between Cards -->
+  <g>
+    <!-- Wire 1-2 -->
+    <line x1="192" y1="150" x2="222" y2="150" stroke="var(--wire-base)" stroke-width="2"/>
+    <line x1="192" y1="150" x2="222" y2="150" stroke="var(--accent-blue)" stroke-width="2" class="wire-pulse"/>
+
+    <!-- Wire 2-3 -->
+    <line x1="378" y1="150" x2="408" y2="150" stroke="var(--wire-base)" stroke-width="2"/>
+    <line x1="378" y1="150" x2="408" y2="150" stroke="var(--accent-purple)" stroke-width="2" class="wire-pulse"/>
+
+    <!-- Wire 3-4 -->
+    <line x1="564" y1="150" x2="594" y2="150" stroke="var(--wire-base)" stroke-width="2"/>
+    <line x1="564" y1="150" x2="594" y2="150" stroke="var(--accent-amber)" stroke-width="2" class="wire-pulse"/>
+
+    <!-- Wire 4-5 -->
+    <line x1="750" y1="150" x2="780" y2="150" stroke="var(--wire-base)" stroke-width="2"/>
+    <line x1="750" y1="150" x2="780" y2="150" stroke="var(--accent-emerald)" stroke-width="2" class="wire-pulse"/>
+  </g>
+
+  <!-- STAGE 1: INGESTION -->
+  <g transform="translate(36, 85)" class="card-box">
+    <rect width="156" height="135" rx="10" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1.2"/>
+    <circle cx="78" cy="28" r="15" fill="var(--tag-bg)"/>
+    <text x="78" y="34" text-anchor="middle" font-size="15">📥</text>
+    <text x="78" y="60" text-anchor="middle" fill="var(--text-title)" font-size="12" font-weight="700">1. Hybrid Ingestion</text>
+    <line x1="18" y1="70" x2="138" y2="70" stroke="var(--border)" stroke-width="0.8"/>
+    <text x="78" y="86" text-anchor="middle" fill="var(--text-body)" font-size="10">OpenAlex • arXiv • S2</text>
+    <text x="78" y="102" text-anchor="middle" fill="var(--text-body)" font-size="10">PubMed • Custom PDFs</text>
+    <rect x="23" y="112" width="110" height="15" rx="7.5" fill="var(--tag-bg)"/>
+    <text x="78" y="123" text-anchor="middle" fill="var(--accent-blue)" font-size="8.5" font-weight="700">DEDUPLICATED CACHE</text>
+  </g>
+
+  <!-- STAGE 2: DUAL-AXIS CLUSTERING -->
+  <g transform="translate(222, 85)" class="card-box">
+    <rect width="156" height="135" rx="10" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1.2"/>
+    <circle cx="78" cy="28" r="15" fill="var(--tag-bg)"/>
+    <text x="78" y="34" text-anchor="middle" font-size="15">🧠</text>
+    <text x="78" y="60" text-anchor="middle" fill="var(--text-title)" font-size="12" font-weight="700">2. Dual-Axis ML</text>
+    <line x1="18" y1="70" x2="138" y2="70" stroke="var(--border)" stroke-width="0.8"/>
+    <text x="78" y="86" text-anchor="middle" fill="var(--text-body)" font-size="10">HDBSCAN / Ward ML</text>
+    <text x="78" y="102" text-anchor="middle" fill="var(--text-body)" font-size="10">Silhouette Optimization</text>
+    <rect x="23" y="112" width="110" height="15" rx="7.5" fill="var(--tag-bg)"/>
+    <text x="78" y="123" text-anchor="middle" fill="var(--accent-purple)" font-size="8.5" font-weight="700">0 NOISE OUTLIERS</text>
+  </g>
+
+  <!-- STAGE 3: COMBINATORIAL 2D MATRIX -->
+  <g transform="translate(408, 85)" class="card-box">
+    <rect width="156" height="135" rx="10" fill="var(--card-bg)" stroke="var(--accent-amber)" stroke-width="1.5"/>
+    <circle cx="78" cy="28" r="15" fill="var(--tag-bg)"/>
+    <text x="78" y="34" text-anchor="middle" font-size="15">📊</text>
+    <text x="78" y="60" text-anchor="middle" fill="var(--text-title)" font-size="12" font-weight="700">3. 2D Void Matrix</text>
+    <line x1="18" y1="70" x2="138" y2="70" stroke="var(--border)" stroke-width="0.8"/>
+    <text x="78" y="86" text-anchor="middle" fill="var(--text-body)" font-size="10">Method × Domain Grid</text>
+    <text x="78" y="102" text-anchor="middle" fill="var(--text-body)" font-size="10">8-Signal Evidence Mine</text>
+    <rect x="23" y="112" width="110" height="15" rx="7.5" fill="var(--tag-bg)"/>
+    <text x="78" y="123" text-anchor="middle" fill="var(--accent-amber)" font-size="8.5" font-weight="700">STRUCTURAL VOIDS</text>
+  </g>
+
+  <!-- STAGE 4: DEVIL'S ADVOCATE -->
+  <g transform="translate(594, 85)" class="card-box">
+    <rect width="156" height="135" rx="10" fill="var(--card-bg)" stroke="var(--card-border)" stroke-width="1.2"/>
+    <circle cx="78" cy="28" r="15" fill="var(--tag-bg)"/>
+    <text x="78" y="34" text-anchor="middle" font-size="15">🛡️</text>
+    <text x="78" y="60" text-anchor="middle" fill="var(--text-title)" font-size="12" font-weight="700">4. Devil's Advocate</text>
+    <line x1="18" y1="70" x2="138" y2="70" stroke="var(--border)" stroke-width="0.8"/>
+    <text x="78" y="86" text-anchor="middle" fill="var(--text-body)" font-size="10">5-Pillar Stress-Test</text>
+    <text x="78" y="102" text-anchor="middle" fill="var(--text-body)" font-size="10">Novelty &amp; Redundancy</text>
+    <rect x="23" y="112" width="110" height="15" rx="7.5" fill="var(--tag-bg)"/>
+    <text x="78" y="123" text-anchor="middle" fill="var(--accent-purple)" font-size="8.5" font-weight="700">ANTI-SYCOPHANCY</text>
+  </g>
+
+  <!-- STAGE 5: GROUNDED DOSSIER -->
+  <g transform="translate(780, 85)" class="card-box">
+    <rect width="156" height="135" rx="10" fill="var(--card-bg)" stroke="var(--accent-emerald)" stroke-width="1.5"/>
+    <circle cx="78" cy="28" r="15" fill="var(--tag-bg)"/>
+    <text x="78" y="34" text-anchor="middle" font-size="15">🏆</text>
+    <text x="78" y="60" text-anchor="middle" fill="var(--text-title)" font-size="12" font-weight="700">5. Grounded Dossier</text>
+    <line x1="18" y1="70" x2="138" y2="70" stroke="var(--border)" stroke-width="0.8"/>
+    <text x="78" y="86" text-anchor="middle" fill="var(--text-body)" font-size="10">Calibrated Scorecards</text>
+    <text x="78" y="102" text-anchor="middle" fill="var(--text-body)" font-size="10">H1/H0 &amp; IEEE LaTeX</text>
+    <rect x="23" y="112" width="110" height="15" rx="7.5" fill="var(--tag-bg)"/>
+    <text x="78" y="123" text-anchor="middle" fill="var(--accent-emerald)" font-size="8.5" font-weight="700">100% CITED FACTS</text>
+  </g>
+</svg>
